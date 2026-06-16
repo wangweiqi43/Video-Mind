@@ -1,0 +1,102 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: videomind-server
+  servlet:
+    multipart:
+      max-file-size: 2GB
+      max-request-size: 2GB
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3307}/videomind?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:root}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAME_SERVER:localhost:9876}
+  producer:
+    group: videomind-task-producer
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+logging:
+  level:
+    com.videomind: debug
+
+videomind:
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    bucket: ${MINIO_BUCKET:videomind-videos}
+  rocketmq:
+    topic:
+      video-analyze: videomind-video-analyze-topic
+    consumer-group:
+      video-analyze: videomind-video-analyze-consumer
+  ffmpeg:
+    mode: ${VIDEOMIND_FFMPEG_MODE:ffmpeg}
+    binary-path: ${FFMPEG_BINARY_PATH:ffmpeg}
+    work-dir: ${FFMPEG_WORK_DIR:runtime/ffmpeg}
+  knowledge:
+    index-name: ${KNOWLEDGE_INDEX_NAME:idx:videomind_knowledge}
+    key-prefix: ${KNOWLEDGE_KEY_PREFIX:knowledge:chunk:}
+    task-status-prefix: ${KNOWLEDGE_TASK_STATUS_PREFIX:knowledge:task:}
+    ttl-seconds: ${KNOWLEDGE_TTL_SECONDS:2592000}
+    embedding-dim: ${KNOWLEDGE_EMBEDDING_DIM:1024}
+    chunk-size: ${KNOWLEDGE_CHUNK_SIZE:600}
+    chunk-overlap: ${KNOWLEDGE_CHUNK_OVERLAP:80}
+  upload:
+    chunk-work-dir: ${UPLOAD_CHUNK_WORK_DIR:runtime/uploads}
+    bitmap-prefix: ${UPLOAD_BITMAP_PREFIX:upload:bitmap:}
+    bitmap-ttl-seconds: ${UPLOAD_BITMAP_TTL_SECONDS:86400}
+  rate-limit:
+    upload-permits-per-minute: ${UPLOAD_PERMITS_PER_MINUTE:60}
+    analyze-permits-per-minute: ${ANALYZE_PERMITS_PER_MINUTE:30}
+    ttl-seconds: ${RATE_LIMIT_TTL_SECONDS:600}
+  ai:
+    asr:
+      mode: ${VIDEOMIND_ASR_MODE:real}
+      endpoint: ${ASR_API_ENDPOINT:https://api.siliconflow.cn/v1/audio/transcriptions}
+      api-key: "${ASR_API_KEY:${SILICONFLOW_API_KEY:}}"
+      model: ${ASR_MODEL:TeleAI/TeleSpeechASR}
+      timeout-seconds: ${ASR_TIMEOUT_SECONDS:300}
+    summary:
+      mode: ${VIDEOMIND_SUMMARY_MODE:real}
+      endpoint: ${SUMMARY_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}
+      api-key: "${SUMMARY_API_KEY:${SILICONFLOW_API_KEY:}}"
+      model: ${SUMMARY_MODEL:deepseek-ai/DeepSeek-V4-Flash}
+      prompt-version: ${SUMMARY_PROMPT_VERSION:summary-v3}
+      timeout-seconds: ${SUMMARY_TIMEOUT_SECONDS:120}
+    embedding:
+      mode: ${VIDEOMIND_EMBEDDING_MODE:real}
+      endpoint: ${EMBEDDING_API_ENDPOINT:https://api.siliconflow.cn/v1/embeddings}
+      api-key: "${EMBEDDING_API_KEY:${SILICONFLOW_API_KEY:}}"
+      model: ${EMBEDDING_MODEL:Qwen/Qwen3-Embedding-0.6B}
+      dimension: ${EMBEDDING_DIMENSION:1024}
+      timeout-seconds: ${EMBEDDING_TIMEOUT_SECONDS:120}
+    chat:
+      mode: ${VIDEOMIND_CHAT_MODE:real}
+      endpoint: ${CHAT_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}
+      api-key: "${CHAT_API_KEY:${SILICONFLOW_API_KEY:}}"
+      model: ${CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
+      timeout-seconds: ${CHAT_TIMEOUT_SECONDS:120}

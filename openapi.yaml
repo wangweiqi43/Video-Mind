@@ -1,0 +1,1195 @@
+openapi: 3.0.3
+info:
+  title: VideoMind API
+  version: 1.0.0
+  description: |
+    VideoMind 是一个本地可运行的 AI 视频内容理解平台。
+    本 OpenAPI 文档可直接导入 Apifox，用于接口调试、联调和项目展示。
+servers:
+  - url: http://localhost:8080
+    description: Local backend
+security: []
+tags:
+  - name: Video
+    description: 视频上传、查询、删除
+  - name: Multipart Upload
+    description: 视频分片上传
+  - name: Task
+    description: 视频解析任务
+  - name: Knowledge
+    description: 知识库向量化
+  - name: Chat
+    description: 智能问答
+
+paths:
+  /api/videos/upload:
+    post:
+      tags:
+        - Video
+      summary: 上传视频
+      description: 上传单个视频文件，后端计算 MD5，写入 MinIO 和数据库元数据。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 视频文件，支持 mp4、mov、avi、mkv、webm、flv、wmv、m4v
+      responses:
+        "200":
+          description: 上传结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoUploadApiResponse"
+              example:
+                code: 0
+                message: success
+                data:
+                  videoId: 12
+                  filename: demo.mp4
+                  fileMd5: ed0fe5bfcea9976c949fd293d7007afd
+                  fileSize: 12842060
+                  bucket: videomind-videos
+                  objectKey: videos/1/2026/05/30/demo.mp4
+                  implemented: true
+                  message: 视频上传成功，已保存到 MinIO 并写入元数据。
+
+  /api/videos/check-md5:
+    get:
+      tags:
+        - Video
+      summary: 检查视频 MD5
+      description: 上传前检查当前用户下是否已存在相同 MD5 的视频。
+      parameters:
+        - name: fileMd5
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 文件 MD5
+          example: ed0fe5bfcea9976c949fd293d7007afd
+      responses:
+        "200":
+          description: 去重检查结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoDuplicateCheckApiResponse"
+
+  /api/videos/list:
+    get:
+      tags:
+        - Video
+      summary: 查询视频列表
+      description: 查询当前用户已上传的视频列表，按创建时间倒序返回。
+      responses:
+        "200":
+          description: 视频列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoFileListApiResponse"
+
+  /api/videos/{videoId}:
+    get:
+      tags:
+        - Video
+      summary: 查询视频详情
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: 视频详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoFileApiResponse"
+    delete:
+      tags:
+        - Video
+      summary: 删除视频
+      description: 删除视频，并清理关联任务、转录、摘要、知识库向量、分片会话和 MinIO 对象。
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptyApiResponse"
+
+  /api/videos/multipart/init:
+    post:
+      tags:
+        - Multipart Upload
+      summary: 初始化分片上传
+      description: 创建或恢复分片上传会话。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MultipartUploadInitRequest"
+            example:
+              filename: demo.mp4
+              fileMd5: ed0fe5bfcea9976c949fd293d7007afd
+              fileSize: 12842060
+              contentType: video/mp4
+              totalParts: 3
+              chunkSize: 5242880
+      responses:
+        "200":
+          description: 分片上传会话
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultipartUploadInitApiResponse"
+
+  /api/videos/multipart/{uploadId}/chunk:
+    post:
+      tags:
+        - Multipart Upload
+      summary: 上传分片
+      description: 上传指定序号的分片，分片序号从 1 开始。
+      parameters:
+        - $ref: "#/components/parameters/UploadId"
+        - name: partNumber
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          description: 分片序号，从 1 开始
+          example: 1
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 当前分片文件
+      responses:
+        "200":
+          description: 分片上传结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChunkUploadApiResponse"
+
+  /api/videos/multipart/{uploadId}/status:
+    get:
+      tags:
+        - Multipart Upload
+      summary: 查询分片上传状态
+      parameters:
+        - $ref: "#/components/parameters/UploadId"
+      responses:
+        "200":
+          description: 分片上传进度
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultipartUploadStatusApiResponse"
+
+  /api/videos/multipart/{uploadId}/complete:
+    post:
+      tags:
+        - Multipart Upload
+      summary: 完成分片上传
+      description: 合并分片，校验文件 MD5，上传 MinIO，并写入视频元数据。
+      parameters:
+        - $ref: "#/components/parameters/UploadId"
+      responses:
+        "200":
+          description: 分片上传完成结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoUploadApiResponse"
+
+  /api/tasks/analyze:
+    post:
+      tags:
+        - Task
+      summary: 创建视频解析任务
+      description: 创建异步解析任务，并发送 RocketMQ 消息。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeTaskCreateRequest"
+            example:
+              videoId: 12
+              autoVectorize: true
+      responses:
+        "200":
+          description: 解析任务创建结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeTaskCreateApiResponse"
+
+  /api/tasks/{taskId}:
+    get:
+      tags:
+        - Task
+      summary: 查询解析任务详情
+      description: 查询任务状态，前端可用该接口轮询任务进度。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskRecordApiResponse"
+
+  /api/tasks/{taskId}/result:
+    get:
+      tags:
+        - Task
+      summary: 查询解析任务结果
+      description: 查询 ASR 转录文本和摘要内容。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: 任务结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResultApiResponse"
+
+  /api/tasks/video/{videoId}/latest-success:
+    get:
+      tags:
+        - Task
+      summary: 查询视频最近一次成功任务
+      description: 查询指定视频最近一次解析成功的任务。
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: 最近一次成功任务，可能为 null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskRecordApiResponse"
+
+  /api/knowledge/vectorize/{taskId}:
+    post:
+      tags:
+        - Knowledge
+      summary: 向量化任务结果
+      description: 将转录文本和摘要切片，生成 Embedding 并写入 Redis Stack / RediSearch。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: 向量化状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStatusApiResponse"
+
+  /api/knowledge/status/{taskId}:
+    get:
+      tags:
+        - Knowledge
+      summary: 查询向量化状态
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: 向量化状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStatusApiResponse"
+
+  /api/chat/session:
+    post:
+      tags:
+        - Chat
+      summary: 创建聊天会话
+      responses:
+        "200":
+          description: 会话创建结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatSessionCreateApiResponse"
+
+  /api/chat/session/list:
+    get:
+      tags:
+        - Chat
+      summary: 查询聊天会话列表
+      responses:
+        "200":
+          description: 会话列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatSessionListApiResponse"
+
+  /api/chat/message:
+    post:
+      tags:
+        - Chat
+      summary: 发送聊天消息
+      description: 非流式聊天接口。后端检索视频知识片段后调用 Chat 模型生成回答。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatMessageRequest"
+            example:
+              sessionId: 16
+              videoId: 12
+              question: 这个视频主要讲了什么？
+      responses:
+        "200":
+          description: 聊天回答
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessageApiResponse"
+
+  /api/chat/message/stream:
+    get:
+      tags:
+        - Chat
+      summary: 流式发送聊天消息 GET
+      description: 使用 SSE 流式返回助手回答。前端当前使用 EventSource 调用该 GET 接口。
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+          example: 16
+        - name: videoId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+          example: 12
+        - name: question
+          in: query
+          required: true
+          schema:
+            type: string
+          example: 这个视频主要讲了什么？
+      responses:
+        "200":
+          description: SSE 事件流。事件包括 delta、done、error。
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: delta
+                data: 这个
+
+                event: delta
+                data: 视频
+
+                event: done
+                data: {"messageId":101,"answer":"这个视频...","references":[],"referencesJson":"[]","createdTime":"2026-05-31T23:08:19"}
+    post:
+      tags:
+        - Chat
+      summary: 流式发送聊天消息 POST
+      description: 后端支持 POST SSE。浏览器原生 EventSource 不支持 POST，适合使用 fetch 流式读取。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatMessageRequest"
+      responses:
+        "200":
+          description: SSE 事件流。事件包括 delta、done、error。
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/chat/session/{sessionId}/messages:
+    get:
+      tags:
+        - Chat
+      summary: 查询会话消息
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: 会话 ID
+          example: 16
+      responses:
+        "200":
+          description: 会话消息列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessageListApiResponse"
+
+components:
+  parameters:
+    VideoId:
+      name: videoId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: 视频 ID
+      example: 12
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: 解析任务 ID
+      example: 26
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 分片上传会话 ID
+      example: 3d4f6a8b9c0d4e2f9a1b2c3d4e5f6789
+
+  schemas:
+    EmptyApiResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          type: object
+          nullable: true
+          example: null
+
+    ErrorApiResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: 请求参数错误
+        data:
+          type: object
+          nullable: true
+          example: null
+
+    UploadStatus:
+      type: string
+      enum:
+        - UPLOADING
+        - UPLOADED
+        - FAILED
+
+    UploadSessionStatus:
+      type: string
+      enum:
+        - UPLOADING
+        - COMPLETED
+        - FAILED
+
+    TaskStatus:
+      type: string
+      enum:
+        - PENDING
+        - PROCESSING
+        - SUCCESS
+        - FAILED
+
+    KnowledgeChunkType:
+      type: string
+      enum:
+        - TRANSCRIPTION
+        - SUMMARY
+
+    MessageRole:
+      type: string
+      enum:
+        - USER
+        - ASSISTANT
+        - SYSTEM
+
+    VideoFile:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12
+        userId:
+          type: integer
+          format: int64
+          example: 1
+        originalFilename:
+          type: string
+          example: demo.mp4
+        fileMd5:
+          type: string
+          example: ed0fe5bfcea9976c949fd293d7007afd
+        fileSize:
+          type: integer
+          format: int64
+          example: 12842060
+        contentType:
+          type: string
+          nullable: true
+          example: video/mp4
+        minioBucket:
+          type: string
+          nullable: true
+          example: videomind-videos
+        minioObjectKey:
+          type: string
+          nullable: true
+          example: videos/1/2026/05/30/demo.mp4
+        uploadStatus:
+          $ref: "#/components/schemas/UploadStatus"
+        durationSeconds:
+          type: integer
+          nullable: true
+          example: null
+        createdTime:
+          type: string
+          example: "2026-05-30T16:57:04"
+        updatedTime:
+          type: string
+          example: "2026-05-30T16:57:04"
+        deleted:
+          type: integer
+          example: 0
+
+    VideoUploadResponse:
+      type: object
+      properties:
+        videoId:
+          type: integer
+          format: int64
+          example: 12
+        filename:
+          type: string
+          example: demo.mp4
+        fileMd5:
+          type: string
+          example: ed0fe5bfcea9976c949fd293d7007afd
+        fileSize:
+          type: integer
+          format: int64
+          example: 12842060
+        bucket:
+          type: string
+          example: videomind-videos
+        objectKey:
+          type: string
+          example: videos/1/2026/05/30/demo.mp4
+        implemented:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: 视频上传成功，已保存到 MinIO 并写入元数据。
+
+    VideoUploadApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/VideoUploadResponse"
+
+    VideoDuplicateCheckResponse:
+      type: object
+      properties:
+        exists:
+          type: boolean
+          example: true
+        videoId:
+          type: integer
+          format: int64
+          nullable: true
+          example: 12
+        filename:
+          type: string
+          nullable: true
+          example: demo.mp4
+        fileMd5:
+          type: string
+          nullable: true
+          example: ed0fe5bfcea9976c949fd293d7007afd
+        message:
+          type: string
+          example: 文件已存在，无需重复上传。
+
+    VideoDuplicateCheckApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/VideoDuplicateCheckResponse"
+
+    VideoFileApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/VideoFile"
+
+    VideoFileListApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoFile"
+
+    MultipartUploadInitRequest:
+      type: object
+      required:
+        - filename
+        - fileMd5
+        - fileSize
+        - totalParts
+        - chunkSize
+      properties:
+        filename:
+          type: string
+          example: demo.mp4
+        fileMd5:
+          type: string
+          example: ed0fe5bfcea9976c949fd293d7007afd
+        fileSize:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 12842060
+        contentType:
+          type: string
+          nullable: true
+          example: video/mp4
+        totalParts:
+          type: integer
+          minimum: 1
+          example: 3
+        chunkSize:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 5242880
+
+    MultipartUploadInitResponse:
+      type: object
+      properties:
+        uploadId:
+          type: string
+          example: 3d4f6a8b9c0d4e2f9a1b2c3d4e5f6789
+        uploadedParts:
+          type: array
+          items:
+            type: integer
+          example:
+            - 1
+            - 2
+        status:
+          $ref: "#/components/schemas/UploadSessionStatus"
+
+    MultipartUploadInitApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/MultipartUploadInitResponse"
+
+    ChunkUploadResponse:
+      type: object
+      properties:
+        uploadId:
+          type: string
+        partNumber:
+          type: integer
+          example: 1
+        uploaded:
+          type: boolean
+          example: true
+        uploadedPartsCount:
+          type: integer
+          example: 1
+
+    ChunkUploadApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/ChunkUploadResponse"
+
+    MultipartUploadStatusResponse:
+      type: object
+      properties:
+        uploadId:
+          type: string
+        totalParts:
+          type: integer
+          example: 3
+        uploadedPartsCount:
+          type: integer
+          example: 2
+        uploadedParts:
+          type: array
+          items:
+            type: integer
+          example:
+            - 1
+            - 2
+        status:
+          $ref: "#/components/schemas/UploadSessionStatus"
+        videoId:
+          type: integer
+          format: int64
+          nullable: true
+          example: null
+
+    MultipartUploadStatusApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/MultipartUploadStatusResponse"
+
+    AnalyzeTaskCreateRequest:
+      type: object
+      required:
+        - videoId
+      properties:
+        videoId:
+          type: integer
+          format: int64
+          example: 12
+        autoVectorize:
+          type: boolean
+          default: false
+          example: true
+
+    AnalyzeTaskCreateResponse:
+      type: object
+      properties:
+        taskId:
+          type: integer
+          format: int64
+          example: 26
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        reused:
+          type: boolean
+          example: false
+
+    AnalyzeTaskCreateApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/AnalyzeTaskCreateResponse"
+
+    TaskRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 26
+        userId:
+          type: integer
+          format: int64
+          example: 1
+        videoId:
+          type: integer
+          format: int64
+          example: 12
+        videoMd5:
+          type: string
+          example: ed0fe5bfcea9976c949fd293d7007afd
+        taskStatus:
+          $ref: "#/components/schemas/TaskStatus"
+        autoVectorize:
+          type: boolean
+          example: true
+        errorMessage:
+          type: string
+          nullable: true
+          example: null
+        startedTime:
+          type: string
+          nullable: true
+          example: "2026-05-30T17:47:53"
+        finishedTime:
+          type: string
+          nullable: true
+          example: "2026-05-30T17:49:03"
+        createdTime:
+          type: string
+          example: "2026-05-30T17:47:53"
+        updatedTime:
+          type: string
+          example: "2026-05-30T17:49:03"
+        deleted:
+          type: integer
+          example: 0
+
+    TaskRecordApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          allOf:
+            - $ref: "#/components/schemas/TaskRecord"
+
+    TaskResultResponse:
+      type: object
+      properties:
+        taskId:
+          type: integer
+          format: int64
+          example: 26
+        videoId:
+          type: integer
+          format: int64
+          example: 12
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        transcriptionText:
+          type: string
+          nullable: true
+          example: 这是视频的转录文本。
+        summaryText:
+          type: string
+          nullable: true
+          example: 这是视频摘要。
+        summaryJson:
+          type: string
+          nullable: true
+          example: "{\"summary\":\"这是视频摘要\"}"
+
+    TaskResultApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/TaskResultResponse"
+
+    KnowledgeStatusResponse:
+      type: object
+      properties:
+        taskId:
+          type: integer
+          format: int64
+          example: 26
+        vectorized:
+          type: boolean
+          example: true
+        status:
+          type: string
+          example: VECTORIZED
+        message:
+          type: string
+          example: 已写入知识库向量索引。
+        chunkCount:
+          type: integer
+          nullable: true
+          example: 6
+        updatedTime:
+          type: string
+          nullable: true
+          example: "2026-05-31T23:08:19"
+
+    KnowledgeStatusApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/KnowledgeStatusResponse"
+
+    ChatSession:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 16
+        userId:
+          type: integer
+          format: int64
+          example: 1
+        title:
+          type: string
+          example: 新会话
+        memorySummary:
+          type: string
+          nullable: true
+          example: null
+        createdTime:
+          type: string
+          example: "2026-05-31T23:08:19"
+        updatedTime:
+          type: string
+          example: "2026-05-31T23:09:25"
+        deleted:
+          type: integer
+          example: 0
+
+    ChatSessionCreateResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+          format: int64
+          example: 16
+        title:
+          type: string
+          example: 新会话
+
+    ChatSessionCreateApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/ChatSessionCreateResponse"
+
+    ChatSessionListApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatSession"
+
+    ChatMessageRequest:
+      type: object
+      required:
+        - sessionId
+        - videoId
+        - question
+      properties:
+        sessionId:
+          type: integer
+          format: int64
+          example: 16
+        videoId:
+          type: integer
+          format: int64
+          example: 12
+        question:
+          type: string
+          example: 这个视频主要讲了什么？
+
+    RagReference:
+      type: object
+      properties:
+        videoId:
+          type: integer
+          format: int64
+          example: 12
+        taskId:
+          type: integer
+          format: int64
+          example: 26
+        chunkType:
+          $ref: "#/components/schemas/KnowledgeChunkType"
+        chunkIndex:
+          type: integer
+          example: 0
+        chunkText:
+          type: string
+          example: 视频片段内容。
+        score:
+          type: number
+          format: double
+          nullable: true
+          example: 0.66
+
+    ChatMessageResponse:
+      type: object
+      properties:
+        messageId:
+          type: integer
+          format: int64
+          example: 101
+        answer:
+          type: string
+          example: 这个视频主要介绍了 AI 视频理解平台。
+        references:
+          type: array
+          items:
+            $ref: "#/components/schemas/RagReference"
+        referencesJson:
+          type: string
+          example: "[]"
+        createdTime:
+          type: string
+          example: "2026-05-31T23:08:19"
+
+    ChatMessageApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/ChatMessageResponse"
+
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 101
+        sessionId:
+          type: integer
+          format: int64
+          example: 16
+        userId:
+          type: integer
+          format: int64
+          example: 1
+        role:
+          $ref: "#/components/schemas/MessageRole"
+        content:
+          type: string
+          example: 这个视频主要讲了什么？
+        referencesJson:
+          type: string
+          nullable: true
+          example: null
+        createdTime:
+          type: string
+          example: "2026-05-31T23:08:19"
+        deleted:
+          type: integer
+          example: 0
+
+    ChatMessageListApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
