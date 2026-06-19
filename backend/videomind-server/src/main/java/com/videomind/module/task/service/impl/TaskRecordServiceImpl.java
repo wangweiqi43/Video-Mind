@@ -79,7 +79,7 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         TaskRecord runningTask = getOne(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
                 .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
-                .in(TaskRecord::getTaskStatus, List.of(TaskStatus.PENDING, TaskStatus.PROCESSING))
+                .in(TaskRecord::getTaskStatus, List.of(TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.RETRYING))
                 .orderByDesc(TaskRecord::getCreatedTime)
                 .last("LIMIT 1"));
         if (runningTask != null) {
@@ -92,6 +92,7 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         taskRecord.setVideoMd5(videoFile.getFileMd5());
         taskRecord.setTaskStatus(TaskStatus.PENDING);
         taskRecord.setAutoVectorize(Boolean.TRUE.equals(request.getAutoVectorize()));
+        taskRecord.setRetryCount(0);
         LocalDateTime now = LocalDateTime.now();
         taskRecord.setCreatedTime(now);
         taskRecord.setUpdatedTime(now);
@@ -201,6 +202,19 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         taskRecord.setFinishedTime(LocalDateTime.now());
         taskRecord.setUpdatedTime(LocalDateTime.now());
         taskRecord.setErrorMessage(null);
+        updateById(taskRecord);
+    }
+
+    @Override
+    public void markRetrying(Long taskId, Long userId, String errorMessage) {
+        TaskRecord taskRecord = getTask(taskId, userId);
+        if (taskRecord.getTaskStatus() == TaskStatus.SUCCESS || taskRecord.getTaskStatus() == TaskStatus.FAILED) {
+            return;
+        }
+        taskRecord.setTaskStatus(TaskStatus.RETRYING);
+        taskRecord.setRetryCount((taskRecord.getRetryCount() == null ? 0 : taskRecord.getRetryCount()) + 1);
+        taskRecord.setUpdatedTime(LocalDateTime.now());
+        taskRecord.setErrorMessage(errorMessage == null ? "等待 RocketMQ 重试" : errorMessage);
         updateById(taskRecord);
     }
 

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS task_record (
   video_md5 CHAR(32) NOT NULL,
   task_status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
   auto_vectorize TINYINT NOT NULL DEFAULT 0,
+  retry_count INT NOT NULL DEFAULT 0,
   error_message VARCHAR(1024),
   started_time DATETIME NULL,
   finished_time DATETIME NULL,

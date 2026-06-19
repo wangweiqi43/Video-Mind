@@ -19,6 +19,7 @@ public class TaskRecord {
     private String videoMd5;
     private TaskStatus taskStatus;
     private Boolean autoVectorize;
+    private Integer retryCount;
     private String errorMessage;
     private LocalDateTime startedTime;
     private LocalDateTime finishedTime;
@@ -27,4 +28,3 @@ public class TaskRecord {
     @TableLogic
     private Integer deleted;
 }
-

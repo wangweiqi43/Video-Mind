@@ -53,6 +53,10 @@ videomind:
       video-analyze: videomind-video-analyze-topic
     consumer-group:
       video-analyze: videomind-video-analyze-consumer
+    dlq-topic:
+      video-analyze: ${VIDEO_ANALYZE_DLQ_TOPIC:%DLQ%videomind-video-analyze-consumer}
+    dlq-consumer-group:
+      video-analyze: ${VIDEO_ANALYZE_DLQ_CONSUMER_GROUP:videomind-video-analyze-dlq-consumer}
   ffmpeg:
     mode: ${VIDEOMIND_FFMPEG_MODE:ffmpeg}
     binary-path: ${FFMPEG_BINARY_PATH:ffmpeg}

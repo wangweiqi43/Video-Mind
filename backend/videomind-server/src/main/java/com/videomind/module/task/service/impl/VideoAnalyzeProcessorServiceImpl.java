@@ -20,13 +20,19 @@ import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.task.service.VideoAnalyzeProcessorService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
+import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import java.time.LocalDateTime;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientResponseException;
 
 @Slf4j
 @Service
@@ -90,18 +96,18 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
                 }
             }
             log.info("Video analyze task completed, taskId={}", message.getTaskId());
-        } catch (LockBusyException ex) {
-            throw ex;
         } catch (Exception ex) {
             if (ex instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            taskRecordService.markFailed(message.getTaskId(), message.getUserId(), ex.getMessage());
-            log.error("Video analyze task failed, taskId={}", message.getTaskId(), ex);
-            if (ex instanceof RuntimeException runtimeException) {
-                throw runtimeException;
+            if (isRetryable(ex)) {
+                taskRecordService.markRetrying(message.getTaskId(), message.getUserId(), ex.getMessage());
+                log.warn("Video analyze task will be retried by RocketMQ, taskId={}, reason={}",
+                        message.getTaskId(), ex.getMessage(), ex);
+                throw toRuntimeException(ex);
             }
-            throw new BizException(500, ex.getMessage());
+            taskRecordService.markFailed(message.getTaskId(), message.getUserId(), ex.getMessage());
+            log.error("Video analyze task failed permanently, taskId={}", message.getTaskId(), ex);
         } finally {
             if (locked && lock.isHeldByCurrentThread()) {
                 lock.unlock();
@@ -114,6 +120,48 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
         private LockBusyException(String message) {
             super(message);
         }
+    }
+
+    private boolean isRetryable(Exception ex) {
+        if (ex instanceof LockBusyException) {
+            return true;
+        }
+        if (ex instanceof InterruptedException) {
+            return true;
+        }
+        if (ex instanceof BizException bizException) {
+            Integer code = bizException.getCode();
+            return code != null && (code == 429 || code >= 500);
+        }
+        if (ex instanceof RestClientResponseException responseException) {
+            int statusCode = responseException.getRawStatusCode();
+            return statusCode == 429 || statusCode >= 500;
+        }
+        if (ex instanceof ResourceAccessException) {
+            return true;
+        }
+        return hasRetryableCause(ex);
+    }
+
+    private boolean hasRetryableCause(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof SocketTimeoutException
+                    || current instanceof ConnectException
+                    || current instanceof TimeoutException
+                    || current instanceof IOException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private RuntimeException toRuntimeException(Exception ex) {
+        if (ex instanceof RuntimeException runtimeException) {
+            return runtimeException;
+        }
+        return new BizException(500, ex.getMessage());
     }
 
     private void saveTranscription(TaskRecord taskRecord, AsrResult asrResult) {

@@ -17,5 +17,7 @@ public interface TaskRecordService extends IService<TaskRecord> {
 
     void markSuccess(Long taskId, Long userId);
 
+    void markRetrying(Long taskId, Long userId, String errorMessage);
+
     void markFailed(Long taskId, Long userId, String errorMessage);
 }
