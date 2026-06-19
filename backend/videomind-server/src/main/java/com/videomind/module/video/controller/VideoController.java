@@ -68,8 +68,9 @@ public class VideoController {
     public ApiResponse<ChunkUploadResponse> uploadChunk(
             @PathVariable String uploadId,
             @RequestParam Integer partNumber,
+            @RequestParam String chunkMd5,
             @RequestPart("file") MultipartFile file) {
-        return ApiResponse.success(multipartUploadService.uploadChunk(uploadId, partNumber, file, MockUserContext.currentUserId()));
+        return ApiResponse.success(multipartUploadService.uploadChunk(uploadId, partNumber, chunkMd5, file, MockUserContext.currentUserId()));
     }
 
     @PostMapping("/multipart/{uploadId}/complete")

@@ -10,6 +10,7 @@ public class ChunkUploadResponse {
     private String uploadId;
     private Integer partNumber;
     private Boolean uploaded;
+    private Boolean skipped;
     private Integer uploadedPartsCount;
+    private String chunkMd5;
 }
-

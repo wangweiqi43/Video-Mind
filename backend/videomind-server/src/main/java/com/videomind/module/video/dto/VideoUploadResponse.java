@@ -15,5 +15,9 @@ public class VideoUploadResponse {
     private String objectKey;
     private Boolean implemented;
     private Boolean duplicate;
+    private Long serverMd5CostMs;
+    private Long serverMergeCostMs;
+    private Long serverStorageCostMs;
+    private Long serverTotalCostMs;
     private String message;
 }

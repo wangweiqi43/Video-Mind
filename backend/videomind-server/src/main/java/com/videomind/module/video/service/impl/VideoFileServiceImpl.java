@@ -62,11 +62,14 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
     @Override
     @Transactional(rollbackFor = Exception.class)
     public VideoUploadResponse upload(MultipartFile file, Long userId) {
+        long totalStart = System.nanoTime();
         rateLimitService.acquire("upload:user:" + userId, rateLimitProperties.getUploadPermitsPerMinute());
         validateUploadFile(file);
 
         String originalFilename = normalizeFilename(file.getOriginalFilename());
+        long md5Start = System.nanoTime();
         String fileMd5 = calculateMd5(file);
+        long md5CostMs = elapsedMs(md5Start);
         VideoFile existing = getReusableUploadedByMd5(fileMd5, userId);
         if (existing != null) {
             throw new BizException(409, "文件已存在：%s（videoId=%d），无需重复上传。"
@@ -75,6 +78,7 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
         String objectKey = buildObjectKey(userId, originalFilename);
 
         StoredObject storedObject;
+        long storageStart = System.nanoTime();
         try (InputStream inputStream = file.getInputStream()) {
             storedObject = objectStorageService.putObject(objectKey, inputStream, file.getSize(), file.getContentType());
         } catch (BizException ex) {
@@ -82,6 +86,7 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
         } catch (Exception ex) {
             throw new BizException(500, "读取上传文件失败：" + ex.getMessage());
         }
+        long storageCostMs = elapsedMs(storageStart);
 
         LocalDateTime now = LocalDateTime.now();
         VideoFile videoFile = new VideoFile();
@@ -97,7 +102,11 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
         videoFile.setUpdatedTime(now);
         save(videoFile);
 
-        return toUploadResponse(videoFile, "视频上传成功，已保存到 MinIO 并写入元数据。", false);
+        VideoUploadResponse response = toUploadResponse(videoFile, "视频上传成功，已保存到 MinIO 并写入元数据。", false);
+        response.setServerMd5CostMs(md5CostMs);
+        response.setServerStorageCostMs(storageCostMs);
+        response.setServerTotalCostMs(elapsedMs(totalStart));
+        return response;
     }
 
     @Override
@@ -246,5 +255,9 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
             return "";
         }
         return filename.substring(index);
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
     }
 }

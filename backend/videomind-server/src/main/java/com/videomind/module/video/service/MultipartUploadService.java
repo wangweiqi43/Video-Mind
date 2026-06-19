@@ -11,10 +11,9 @@ public interface MultipartUploadService {
 
     MultipartUploadInitResponse init(MultipartUploadInitRequest request, Long userId);
 
-    ChunkUploadResponse uploadChunk(String uploadId, Integer partNumber, MultipartFile file, Long userId);
+    ChunkUploadResponse uploadChunk(String uploadId, Integer partNumber, String chunkMd5, MultipartFile file, Long userId);
 
     MultipartUploadStatusResponse status(String uploadId, Long userId);
 
     VideoUploadResponse complete(String uploadId, Long userId);
 }
-

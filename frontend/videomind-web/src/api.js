@@ -31,11 +31,11 @@ export const api = {
   initMultipartUpload(payload) {
     return http.post('/videos/multipart/init', payload)
   },
-  uploadChunk(uploadId, partNumber, chunk) {
+  uploadChunk(uploadId, partNumber, chunk, chunkMd5) {
     const form = new FormData()
     form.append('file', chunk)
     return http.post(`/videos/multipart/${uploadId}/chunk`, form, {
-      params: { partNumber }
+      params: { partNumber, chunkMd5 }
     })
   },
   multipartStatus(uploadId) {

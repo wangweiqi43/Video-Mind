@@ -24,6 +24,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -104,7 +105,7 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
     }
 
     @Override
-    public ChunkUploadResponse uploadChunk(String uploadId, Integer partNumber, MultipartFile file, Long userId) {
+    public ChunkUploadResponse uploadChunk(String uploadId, Integer partNumber, String chunkMd5, MultipartFile file, Long userId) {
         rateLimitService.acquire("upload:chunk:user:" + userId, rateLimitProperties.getUploadPermitsPerMinute());
         VideoUploadSession session = getSession(uploadId, userId);
         if (session.getUploadStatus() != UploadSessionStatus.UPLOADING) {
@@ -116,14 +117,49 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
         if (file == null || file.isEmpty()) {
             throw new BizException(400, "分片文件不能为空");
         }
+        if (!isMd5(chunkMd5)) {
+            throw new BizException(400, "分片 MD5 非法");
+        }
 
         RLock lock = redissonClient.getLock("lock:upload:chunk:" + uploadId + ":" + partNumber);
         lock.lock(60, TimeUnit.SECONDS);
         try {
             Path partPath = partPath(uploadId, partNumber);
             Files.createDirectories(partPath.getParent());
-            file.transferTo(partPath);
             String bitmapKey = bitmapKey(uploadId);
+            if (isPartAlreadyUploaded(bitmapKey, partNumber, partPath)) {
+                int uploadedCount = readUploadedParts(session).size();
+                return ChunkUploadResponse.builder()
+                        .uploadId(uploadId)
+                        .partNumber(partNumber)
+                        .uploaded(true)
+                        .skipped(true)
+                        .uploadedPartsCount(uploadedCount)
+                        .chunkMd5(chunkMd5.toLowerCase(Locale.ROOT))
+                        .build();
+            }
+            Path tempPath = partPath.resolveSibling(partPath.getFileName() + ".tmp");
+            try {
+                file.transferTo(tempPath);
+                String actualChunkMd5;
+                try (InputStream inputStream = Files.newInputStream(tempPath)) {
+                    actualChunkMd5 = DigestUtils.md5DigestAsHex(inputStream);
+                }
+                if (!chunkMd5.equalsIgnoreCase(actualChunkMd5)) {
+                    Files.deleteIfExists(tempPath);
+                    throw new BizException(400, "分片 MD5 校验失败，请重新上传该分片");
+                }
+                try {
+                    Files.move(tempPath, partPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException ex) {
+                    Files.move(tempPath, partPath, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (BizException ex) {
+                throw ex;
+            } catch (IOException ex) {
+                Files.deleteIfExists(tempPath);
+                throw ex;
+            }
             stringRedisTemplate.opsForValue().setBit(bitmapKey, partNumber - 1, true);
             stringRedisTemplate.expire(bitmapKey, Duration.ofSeconds(uploadProperties.getBitmapTtlSeconds()));
             int uploadedCount = readUploadedParts(session).size();
@@ -134,8 +170,12 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
                     .uploadId(uploadId)
                     .partNumber(partNumber)
                     .uploaded(true)
+                    .skipped(false)
                     .uploadedPartsCount(uploadedCount)
+                    .chunkMd5(chunkMd5.toLowerCase(Locale.ROOT))
                     .build();
+        } catch (BizException ex) {
+            throw ex;
         } catch (Exception ex) {
             throw new BizException(500, "上传分片失败：" + ex.getMessage());
         } finally {
@@ -162,6 +202,7 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
     @Override
     @Transactional(rollbackFor = Exception.class)
     public VideoUploadResponse complete(String uploadId, Long userId) {
+        long totalStart = System.nanoTime();
         rateLimitService.acquire("upload:complete:user:" + userId, rateLimitProperties.getUploadPermitsPerMinute());
         RLock lock = redissonClient.getLock("lock:upload:complete:" + uploadId);
         lock.lock(10, TimeUnit.MINUTES);
@@ -173,11 +214,15 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
                 return responseForCompleted(session);
             }
             ensureAllPartsUploaded(session);
+            long mergeStart = System.nanoTime();
             Path mergedFile = mergeParts(session);
+            long mergeCostMs = elapsedMs(mergeStart);
             String actualMd5;
+            long md5Start = System.nanoTime();
             try (InputStream inputStream = Files.newInputStream(mergedFile)) {
                 actualMd5 = DigestUtils.md5DigestAsHex(inputStream);
             }
+            long md5CostMs = elapsedMs(md5Start);
             if (!session.getFileMd5().equalsIgnoreCase(actualMd5)) {
                 session.setUploadStatus(UploadSessionStatus.FAILED);
                 session.setUpdatedTime(LocalDateTime.now());
@@ -193,14 +238,20 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
                 updateById(session);
                 stringRedisTemplate.delete(bitmapKey(uploadId));
                 cleanupUploadDir(uploadId);
-                return videoFileService.toUploadResponse(uploaded, "文件已存在，已秒传成功。", true);
+                VideoUploadResponse response = videoFileService.toUploadResponse(uploaded, "文件已存在，已秒传成功。", true);
+                response.setServerMergeCostMs(mergeCostMs);
+                response.setServerMd5CostMs(md5CostMs);
+                response.setServerTotalCostMs(elapsedMs(totalStart));
+                return response;
             }
 
             StoredObject storedObject;
+            long storageStart = System.nanoTime();
             try (InputStream inputStream = Files.newInputStream(mergedFile)) {
                 storedObject = objectStorageService.putObject(buildObjectKey(userId, session.getOriginalFilename()),
                         inputStream, Files.size(mergedFile), session.getContentType());
             }
+            long storageCostMs = elapsedMs(storageStart);
             VideoFile videoFile = saveVideoFile(session, storedObject);
             session.setVideoId(videoFile.getId());
             session.setUploadStatus(UploadSessionStatus.COMPLETED);
@@ -210,7 +261,12 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
             stringRedisTemplate.delete(bitmapKey(uploadId));
             cleanupUploadDir(uploadId);
 
-            return videoFileService.toUploadResponse(videoFile, "分片上传完成，已合并并写入 MinIO。", false);
+            VideoUploadResponse response = videoFileService.toUploadResponse(videoFile, "分片上传完成，已合并并写入 MinIO。", false);
+            response.setServerMergeCostMs(mergeCostMs);
+            response.setServerMd5CostMs(md5CostMs);
+            response.setServerStorageCostMs(storageCostMs);
+            response.setServerTotalCostMs(elapsedMs(totalStart));
+            return response;
         } catch (BizException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -309,6 +365,11 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
         return uploadDir(uploadId).resolve("part-" + partNumber);
     }
 
+    private boolean isPartAlreadyUploaded(String bitmapKey, Integer partNumber, Path partPath) {
+        Boolean uploaded = stringRedisTemplate.opsForValue().getBit(bitmapKey, partNumber - 1);
+        return Boolean.TRUE.equals(uploaded) && Files.exists(partPath);
+    }
+
     private String bitmapKey(String uploadId) {
         return uploadProperties.getBitmapPrefix() + uploadId;
     }
@@ -316,6 +377,10 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
     private String buildObjectKey(Long userId, String originalFilename) {
         String extension = getExtension(originalFilename);
         return "videos/%d/multipart/%s%s".formatted(userId, UUID.randomUUID(), extension);
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
     }
 
     private void validateFilename(String filename) {
@@ -333,6 +398,10 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
     private boolean isSupportedVideoName(String filename) {
         String extension = getExtension(filename).toLowerCase(Locale.ROOT);
         return List.of(".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv", ".m4v").contains(extension);
+    }
+
+    private boolean isMd5(String value) {
+        return StringUtils.hasText(value) && value.matches("(?i)^[0-9a-f]{32}$");
     }
 
     private String getExtension(String filename) {

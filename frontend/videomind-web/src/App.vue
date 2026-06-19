@@ -121,7 +121,14 @@ async function handleUpload(options) {
   state.uploadProgress = 0
   try {
     ElMessage.info('正在计算文件指纹，准备分片上传...')
+    const md5Start = performance.now()
     const fileMd5 = await calculateFileMd5(options.file)
+    const clientMd5CostMs = Math.round(performance.now() - md5Start)
+    console.info('[VideoMind Perf] frontendMd5CostMs=%d fileSize=%d fileMd5=%s',
+      clientMd5CostMs,
+      options.file.size,
+      fileMd5
+    )
     const uploaded = await uploadVideoByChunks(options.file, fileMd5)
     ElMessage.success(uploaded.duplicate ? '视频已存在，秒传成功' : '视频上传成功')
     await loadVideos()
@@ -165,6 +172,19 @@ function calculateFileMd5(file) {
   })
 }
 
+function calculateChunkMd5(chunk) {
+  return new Promise((resolve, reject) => {
+    const spark = new SparkMD5.ArrayBuffer()
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      spark.append(event.target.result)
+      resolve(spark.end())
+    }
+    reader.onerror = () => reject(new Error('计算分片 MD5 失败，请重新上传该分片'))
+    reader.readAsArrayBuffer(chunk)
+  })
+}
+
 async function uploadVideoByChunks(file, fileMd5) {
   const totalParts = Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK_SIZE))
   const init = await api.initMultipartUpload({
@@ -199,7 +219,8 @@ async function uploadVideoByChunks(file, fileMd5) {
     const start = (partNumber - 1) * UPLOAD_CHUNK_SIZE
     const end = Math.min(start + UPLOAD_CHUNK_SIZE, file.size)
     const chunk = file.slice(start, end)
-    await api.uploadChunk(uploadId, partNumber, chunk)
+    const chunkMd5 = await calculateChunkMd5(chunk)
+    await api.uploadChunk(uploadId, partNumber, chunk, chunkMd5)
     uploadedSet.add(partNumber)
     updateChunkUploadProgress(uploadedSet.size, totalParts)
   }
