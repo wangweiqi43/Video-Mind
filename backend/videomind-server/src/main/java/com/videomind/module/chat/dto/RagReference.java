@@ -14,5 +14,11 @@ public class RagReference {
     private Integer chunkIndex;
     private String chunkText;
     private Double score;
+    private String sourceType;
+    private String title;
+    private String domain;
+    private String publishedAt;
+    private String url;
+    private Integer startSeconds;
+    private Integer endSeconds;
 }
-

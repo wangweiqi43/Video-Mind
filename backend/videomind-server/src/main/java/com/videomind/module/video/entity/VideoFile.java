@@ -23,9 +23,17 @@ public class VideoFile {
     private String minioObjectKey;
     private UploadStatus uploadStatus;
     private Integer durationSeconds;
+    private String agentKnowledgeBaseId;
+    private Integer transcriptVersion;
+    private String agentIngestStatus;
+    private String summaryStatus;
+    private Integer summaryVersion;
+    private String latestSummaryId;
+    private String latestPresentationId;
+    private String agentLastError;
+    private LocalDateTime agentUpdatedAt;
     private LocalDateTime createdTime;
     private LocalDateTime updatedTime;
     @TableLogic
     private Integer deleted;
 }
-

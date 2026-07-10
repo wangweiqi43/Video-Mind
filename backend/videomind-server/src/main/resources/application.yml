@@ -104,3 +104,18 @@ videomind:
       api-key: "${CHAT_API_KEY:${SILICONFLOW_API_KEY:}}"
       model: ${CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
       timeout-seconds: ${CHAT_TIMEOUT_SECONDS:120}
+  agent:
+    enabled: ${VIDEOMIND_AGENT_ENABLED:false}
+    ingest-enabled: ${VIDEOMIND_AGENT_INGEST_ENABLED:false}
+    chat-enabled: ${VIDEOMIND_AGENT_CHAT_ENABLED:false}
+    presentation-enabled: ${VIDEOMIND_AGENT_PRESENTATION_ENABLED:false}
+    fallback-on-error: ${VIDEOMIND_AGENT_FALLBACK_ON_ERROR:true}
+    base-url: ${AGENT_PLATFORM_BASE_URL:http://localhost:8090}
+    tenant-id: ${AGENT_PLATFORM_TENANT_ID:videomind}
+    api-key: ${AGENT_PLATFORM_API_KEY:}
+    signing-secret: ${AGENT_PLATFORM_SIGNING_SECRET:}
+    webhook-secret: ${AGENT_PLATFORM_WEBHOOK_SECRET:}
+    connect-timeout-seconds: ${AGENT_PLATFORM_CONNECT_TIMEOUT_SECONDS:10}
+    read-timeout-seconds: ${AGENT_PLATFORM_READ_TIMEOUT_SECONDS:180}
+    max-retries: ${AGENT_PLATFORM_MAX_RETRIES:2}
+    presigned-url-expiry-seconds: ${AGENT_PRESIGNED_URL_EXPIRY_SECONDS:900}

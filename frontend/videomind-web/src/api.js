@@ -68,22 +68,39 @@ export const api = {
   listSessions(videoId) {
     return http.get('/chat/session/list', { params: { videoId } })
   },
-  sendMessage(sessionId, videoId, question) {
-    return http.post('/chat/message', { sessionId, videoId, question })
+  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', applicationMode = 'NORMAL') {
+    return http.post('/chat/message', { sessionId, videoId, question, answerScope, applicationMode })
   },
-  streamMessage(sessionId, videoId, question, onDelta) {
-    return streamChatMessage(sessionId, videoId, question, onDelta)
+  streamMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta) {
+    return streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta)
   },
   listMessages(sessionId, videoId) {
     return http.get(`/chat/session/${sessionId}/messages`, { params: { videoId } })
+  },
+  createPresentation(videoId, payload) {
+    return http.post(`/videos/${videoId}/presentations`, payload)
+  },
+  listPresentations(videoId) {
+    return http.get(`/videos/${videoId}/presentations`)
+  },
+  getPresentation(videoId, taskId) {
+    return http.get(`/videos/${videoId}/presentations/${taskId}`)
+  },
+  retryPresentation(videoId, taskId) {
+    return http.post(`/videos/${videoId}/presentations/${taskId}/retry`)
+  },
+  getCapabilities() {
+    return http.get('/v1/system/capabilities')
   }
 }
 
-function streamChatMessage(sessionId, videoId, question, onDelta) {
+function streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta) {
   const params = new URLSearchParams({
     sessionId: String(sessionId),
     videoId: String(videoId),
-    question
+    question,
+    answerScope,
+    applicationMode
   })
   return new Promise((resolve, reject) => {
     const source = new EventSource(`/api/chat/message/stream?${params.toString()}`)

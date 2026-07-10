@@ -1,6 +1,7 @@
 package com.videomind.module.knowledge.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.videomind.agentclient.AgentClientProperties;
 import com.videomind.common.enums.KnowledgeChunkType;
 import com.videomind.common.enums.TaskStatus;
 import com.videomind.common.exception.BizException;
@@ -17,6 +18,8 @@ import com.videomind.module.task.entity.VideoTranscription;
 import com.videomind.module.task.mapper.AiSummaryResultMapper;
 import com.videomind.module.task.mapper.VideoTranscriptionMapper;
 import com.videomind.module.task.service.TaskRecordService;
+import com.videomind.module.video.entity.VideoFile;
+import com.videomind.module.video.service.VideoFileService;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -34,12 +37,21 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     private final EmbeddingClient embeddingClient;
     private final KnowledgeVectorRepository knowledgeVectorRepository;
     private final KnowledgeStatusRepository knowledgeStatusRepository;
+    private final AgentClientProperties agentProperties;
+    private final VideoFileService videoFileService;
 
     @Override
     public KnowledgeStatusResponse vectorizeTask(Long taskId, Long userId) {
         TaskRecord taskRecord = taskRecordService.getTask(taskId, userId);
         if (taskRecord.getTaskStatus() != TaskStatus.SUCCESS) {
             throw new BizException(400, "只有解析成功的任务才能加入知识库");
+        }
+        if (agentProperties.isEnabled() && agentProperties.isIngestEnabled()) {
+            VideoFile video = videoFileService.getVideoDetail(taskRecord.getVideoId(), userId);
+            if (!StringUtils.hasText(video.getAgentIngestStatus())) {
+                throw new BizException(409, "该视频尚未提交 Agent Platform，请重新执行视频解析");
+            }
+            return agentStatus(taskId, video);
         }
 
         VideoTranscription transcription = getTranscription(taskId, userId);
@@ -78,7 +90,10 @@ public class KnowledgeServiceImpl implements KnowledgeService {
 
     @Override
     public KnowledgeStatusResponse getVectorizeStatus(Long taskId, Long userId) {
-        taskRecordService.getTask(taskId, userId);
+        TaskRecord taskRecord = taskRecordService.getTask(taskId, userId);
+        if (agentProperties.isEnabled() && agentProperties.isIngestEnabled()) {
+            return agentStatus(taskId, videoFileService.getVideoDetail(taskRecord.getVideoId(), userId));
+        }
         KnowledgeStatusResponse status = knowledgeStatusRepository.getStatus(taskId);
         long actualCount = knowledgeVectorRepository.countChunks(taskId);
         if (Boolean.TRUE.equals(status.getVectorized()) && actualCount == 0) {
@@ -95,6 +110,19 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             status.setChunkCount((int) actualCount);
         }
         return status;
+    }
+
+    private KnowledgeStatusResponse agentStatus(Long taskId, VideoFile video) {
+        String status = StringUtils.hasText(video.getAgentIngestStatus()) ? video.getAgentIngestStatus() : "PENDING";
+        boolean complete = "SUCCESS".equalsIgnoreCase(status) || "COMPLETED".equalsIgnoreCase(status);
+        return KnowledgeStatusResponse.builder()
+                .taskId(taskId)
+                .vectorized(complete)
+                .status("AGENT_" + status.toUpperCase())
+                .message(complete ? "Agent Platform 已完成视频索引。" : "Agent Platform 正在处理摘要和索引。")
+                .chunkCount(0)
+                .updatedTime(video.getAgentUpdatedAt() == null ? null : video.getAgentUpdatedAt().toString())
+                .build();
     }
 
     private VideoTranscription getTranscription(Long taskId, Long userId) {

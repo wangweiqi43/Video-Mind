@@ -7,16 +7,23 @@ import java.util.function.Consumer;
 
 public interface ChatAnswerClient {
 
-    String answer(String question, List<RagReference> references, List<ChatMessage> recentMessages, String memorySummary);
+    String answer(
+            String question,
+            List<RagReference> references,
+            List<ChatMessage> recentMessages,
+            String memorySummary,
+            String answerScope
+    );
 
     default void streamAnswer(
             String question,
             List<RagReference> references,
             List<ChatMessage> recentMessages,
             String memorySummary,
+            String answerScope,
             Consumer<String> onDelta
     ) {
-        String content = answer(question, references, recentMessages, memorySummary);
+        String content = answer(question, references, recentMessages, memorySummary, answerScope);
         for (int i = 0; i < content.length(); i++) {
             onDelta.accept(content.substring(i, i + 1));
         }

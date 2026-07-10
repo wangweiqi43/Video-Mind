@@ -3,9 +3,23 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SparkMD5 from 'spark-md5'
 import { api } from './api'
+import ModeSwitcher from './components/ModeSwitcher.vue'
+import AdvancedModeLayout from './components/AdvancedModeLayout.vue'
 
 const state = reactive({
   videos: [],
+  appMode: readInitialMode(),
+  capabilities: {
+    normal_chat: true,
+    knowledge_extended: true,
+    advanced_mode: true,
+    advanced_chat: false,
+    deep_research: false,
+    ppt_generation: false,
+    report_export_pdf: false,
+    report_export_docx: false,
+    suggested_questions: false
+  },
   selectedVideo: null,
   videoListRefreshing: false,
   uploadProgress: 0,
@@ -26,6 +40,7 @@ const state = reactive({
   activeSessionId: null,
   messages: [],
   question: '',
+  answerScope: 'KNOWLEDGE_EXTENDED',
   loadingChat: false
 })
 
@@ -46,6 +61,9 @@ const chatPlaceholder = computed(() => {
   if (!state.selectedVideo?.id) return '请先选择一个视频，再针对该视频内容提问...'
   return `正在针对《${state.selectedVideo.originalFilename}》提问...`
 })
+const answerScopeHint = computed(() => state.answerScope === 'KNOWLEDGE_ONLY'
+  ? '严格依据当前视频知识库，不使用模型外部知识，也不访问互联网。'
+  : '扩展相关片段、章节与上下文来增强回答，仍然不访问互联网。')
 const transcriptPreview = computed(() => {
   if (state.taskResult?.transcriptionText) return state.taskResult.transcriptionText
   return state.resultLoading ? '正在读取历史转录文本...' : '解析成功后，这里会出现语音转文字结果。'
@@ -57,7 +75,31 @@ const summaryPreview = computed(() => {
 const structuredSummary = computed(() => parseSummary(state.taskResult?.summaryText))
 const autoVectorizeLabel = computed(() => state.autoVectorize ? '解析后入库' : '仅解析')
 
-onMounted(loadVideos)
+onMounted(async () => {
+  await Promise.all([loadVideos(), loadCapabilities()])
+})
+
+function readInitialMode() {
+  const queryMode = new URLSearchParams(window.location.search).get('mode')
+  if (['normal', 'advanced'].includes(queryMode)) return queryMode
+  return localStorage.getItem('videomind:application-mode') === 'advanced' ? 'advanced' : 'normal'
+}
+
+function switchMode(mode) {
+  state.appMode = mode
+  localStorage.setItem('videomind:application-mode', mode)
+  const url = new URL(window.location.href)
+  url.searchParams.set('mode', mode)
+  window.history.replaceState({}, '', url)
+}
+
+async function loadCapabilities() {
+  try {
+    state.capabilities = await api.getCapabilities()
+  } catch {
+    // 保留本地安全默认值：高级模式可预览，但不会发送任何 Agent 请求。
+  }
+}
 
 async function loadVideos() {
   state.videoListRefreshing = true
@@ -491,9 +533,16 @@ async function sendQuestion() {
     }) - 1
     const assistantMessage = state.messages[assistantIndex]
     const typewriter = createTypewriter(assistantMessage)
-    const answer = await api.streamMessage(state.activeSessionId, state.selectedVideo.id, question, (delta) => {
+    const answer = await api.streamMessage(
+      state.activeSessionId,
+      state.selectedVideo.id,
+      question,
+      state.answerScope,
+      'NORMAL',
+      (delta) => {
       typewriter.push(delta)
-    })
+      }
+    )
     if (!assistantMessage.content && answer?.answer) {
       typewriter.push(answer.answer)
     }
@@ -584,6 +633,33 @@ function removeVideoSessionId(videoId) {
   const sessionMap = readVideoSessionMap()
   delete sessionMap[String(videoId)]
   localStorage.setItem(VIDEO_CHAT_SESSION_KEY, JSON.stringify(sessionMap))
+}
+
+function referenceType(ref) {
+  return String(ref.sourceType || (ref.url ? 'WEB' : 'VIDEO')).toUpperCase()
+}
+
+function referenceTitle(ref) {
+  if (referenceType(ref) === 'WEB') return ref.title || ref.domain || '网页来源'
+  const timestamp = Number.isFinite(ref.startSeconds) ? ` · ${formatDuration(ref.startSeconds)}` : ''
+  return `${ref.title || '视频内容'}${timestamp}`
+}
+
+function openReference(ref) {
+  if (referenceType(ref) === 'WEB' && ref.url) {
+    window.open(ref.url, '_blank', 'noopener,noreferrer')
+    return
+  }
+  const videoId = ref.videoId || state.selectedVideo?.id
+  if (!videoId) return
+  const timestamp = Number.isFinite(ref.startSeconds) ? `#t=${ref.startSeconds}` : ''
+  window.open(`/api/videos/${videoId}/stream${timestamp}`, '_blank', 'noopener')
+}
+
+function formatDuration(seconds) {
+  const value = Math.max(0, Number(seconds) || 0)
+  const minutes = Math.floor(value / 60)
+  return `${minutes}:${String(Math.floor(value % 60)).padStart(2, '0')}`
 }
 
 function sessionTitle(session) {
@@ -712,11 +788,12 @@ function compactParagraphs(lines) {
 <template>
   <main class="shell">
     <header class="brand">
+      <ModeSwitcher :model-value="state.appMode" @update:model-value="switchMode" />
       <h1>VideoMind</h1>
       <p>太长不看？🤔 不看我看！😊</p>
     </header>
 
-    <section class="app-layout">
+    <section v-show="state.appMode === 'normal'" class="app-layout" data-testid="normal-layout">
       <aside class="panel library-card">
         <div class="section-head">
           <div>
@@ -959,14 +1036,36 @@ function compactParagraphs(lines) {
                   <div v-for="(message, index) in state.messages" :key="index" class="message" :class="message.role?.toLowerCase()">
                     <strong>{{ message.role === 'USER' ? '你' : 'VideoMind' }}</strong>
                     <p>{{ message.content }}</p>
-                    <div v-if="parseRefs(message).length" class="refs">
-                      <span v-for="ref in parseRefs(message)" :key="`${ref.taskId}-${ref.chunkIndex}`">
-                        视频 {{ ref.videoId }} / {{ ref.chunkType }} #{{ ref.chunkIndex }}
-                      </span>
+                    <div v-if="parseRefs(message).length" class="references">
+                      <span class="reference-heading">参考来源</span>
+                      <button
+                        v-for="(ref, refIndex) in parseRefs(message)"
+                        :key="`${ref.taskId || ref.url}-${ref.chunkIndex || refIndex}`"
+                        class="reference-card"
+                        type="button"
+                        @click="openReference(ref)"
+                      >
+                        <span class="reference-kind" :class="referenceType(ref).toLowerCase()">
+                          {{ referenceType(ref) === 'WEB' ? '互联网扩展' : '视频内容' }}
+                        </span>
+                        <strong>{{ referenceTitle(ref) }}</strong>
+                        <small v-if="referenceType(ref) === 'WEB'">
+                          {{ ref.domain || '网页' }}<template v-if="ref.publishedAt"> · {{ ref.publishedAt }}</template>
+                        </small>
+                        <small v-else>{{ ref.chunkText || `片段 #${ref.chunkIndex ?? '-'}` }}</small>
+                      </button>
                     </div>
                   </div>
                 </div>
                 <div class="composer">
+                  <div class="answer-scope">
+                    <span>回答范围</span>
+                    <el-radio-group v-model="state.answerScope" size="small">
+                      <el-radio-button value="KNOWLEDGE_ONLY">仅知识库</el-radio-button>
+                      <el-radio-button value="KNOWLEDGE_EXTENDED">知识库扩展</el-radio-button>
+                    </el-radio-group>
+                    <small>{{ answerScopeHint }}</small>
+                  </div>
                   <el-input
                     v-model="state.question"
                     size="large"
@@ -991,5 +1090,15 @@ function compactParagraphs(lines) {
         </section>
       </section>
     </section>
+
+    <AdvancedModeLayout
+      v-show="state.appMode === 'advanced'"
+      :videos="state.videos"
+      :selected-video="state.selectedVideo"
+      :summary-text="state.taskResult?.summaryText || ''"
+      :summary-loading="state.resultLoading"
+      :capabilities="state.capabilities"
+      @select-video="selectVideo"
+    />
   </main>
 </template>

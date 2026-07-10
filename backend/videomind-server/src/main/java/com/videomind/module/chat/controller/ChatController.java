@@ -52,12 +52,16 @@ public class ChatController {
     public SseEmitter streamMessage(
             @RequestParam Long sessionId,
             @RequestParam Long videoId,
-            @RequestParam String question
+            @RequestParam String question,
+            @RequestParam(defaultValue = "KNOWLEDGE_EXTENDED") String answerScope,
+            @RequestParam(defaultValue = "NORMAL") String applicationMode
     ) {
         ChatMessageRequest request = new ChatMessageRequest();
         request.setSessionId(sessionId);
         request.setVideoId(videoId);
         request.setQuestion(question);
+        request.setAnswerScope(answerScope);
+        request.setApplicationMode(applicationMode);
         return chatService.streamMessage(request, MockUserContext.currentUserId());
     }
 

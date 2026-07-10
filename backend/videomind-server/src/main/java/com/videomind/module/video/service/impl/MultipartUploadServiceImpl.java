@@ -1,6 +1,7 @@
 package com.videomind.module.video.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.videomind.common.enums.UploadSessionStatus;
 import com.videomind.common.enums.UploadStatus;
@@ -60,7 +61,7 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
     public MultipartUploadInitResponse init(MultipartUploadInitRequest request, Long userId) {
         rateLimitService.acquire("upload:init:user:" + userId, rateLimitProperties.getUploadPermitsPerMinute());
         validateFilename(request.getFilename());
-        VideoFile uploaded = videoFileService.getReusableUploadedByMd5(request.getFileMd5(), userId);
+        VideoFile uploaded = findReusableUploadedVideoOrCleanupStale(request.getFileMd5(), userId);
         if (uploaded != null) {
             return MultipartUploadInitResponse.builder()
                     .status("UPLOADED")
@@ -183,6 +184,35 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
                 lock.unlock();
             }
         }
+    }
+
+    private VideoFile findReusableUploadedVideoOrCleanupStale(String fileMd5, Long userId) {
+        List<VideoFile> uploadedVideos = videoFileService.list(new LambdaQueryWrapper<VideoFile>()
+                .eq(VideoFile::getUserId, userId)
+                .eq(VideoFile::getFileMd5, fileMd5)
+                .eq(VideoFile::getUploadStatus, UploadStatus.UPLOADED)
+                .orderByDesc(VideoFile::getCreatedTime));
+        for (VideoFile video : uploadedVideos) {
+            if (objectStorageService.objectExists(video.getMinioBucket(), video.getMinioObjectKey())) {
+                return video;
+            }
+            cleanupStaleUploadData(video, fileMd5, userId);
+        }
+        return null;
+    }
+
+    private void cleanupStaleUploadData(VideoFile video, String fileMd5, Long userId) {
+        List<VideoUploadSession> sessions = list(new LambdaQueryWrapper<VideoUploadSession>()
+                .eq(VideoUploadSession::getUserId, userId)
+                .eq(VideoUploadSession::getFileMd5, fileMd5));
+        sessions.forEach(session -> {
+            stringRedisTemplate.delete(bitmapKey(session.getUploadId()));
+            cleanupUploadDir(session.getUploadId());
+        });
+        videoFileService.deleteVideo(video.getId(), userId);
+        remove(Wrappers.<VideoUploadSession>lambdaQuery()
+                .eq(VideoUploadSession::getUserId, userId)
+                .eq(VideoUploadSession::getFileMd5, fileMd5));
     }
 
     @Override

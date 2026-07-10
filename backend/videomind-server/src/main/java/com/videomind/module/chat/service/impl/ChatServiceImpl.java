@@ -3,10 +3,14 @@ package com.videomind.module.chat.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.videomind.agentclient.AgentChatClient;
+import com.videomind.agentclient.AgentClientProperties;
 import com.videomind.common.enums.MessageRole;
 import com.videomind.common.exception.BizException;
 import com.videomind.module.chat.dto.ChatMessageRequest;
 import com.videomind.module.chat.dto.ChatMessageResponse;
+import com.videomind.module.chat.dto.ConversationContext;
+import com.videomind.module.chat.dto.ConversationTurn;
 import com.videomind.module.chat.dto.ChatSessionCreateResponse;
 import com.videomind.module.chat.dto.ChatSessionResponse;
 import com.videomind.module.chat.dto.RagReference;
@@ -16,35 +20,46 @@ import com.videomind.module.chat.llm.ChatAnswerClient;
 import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.mapper.ChatSessionMapper;
 import com.videomind.module.chat.service.ChatService;
+import com.videomind.module.chat.service.ConversationContextService;
+import com.videomind.module.chat.service.ConversationSummaryService;
+import com.videomind.module.chat.support.ConversationTurnAssembler;
+import com.videomind.module.chat.support.AnswerScopePolicy;
 import com.videomind.module.knowledge.dto.KnowledgeSearchResult;
 import com.videomind.module.knowledge.embedding.EmbeddingClient;
 import com.videomind.module.knowledge.repository.KnowledgeSearchRepository;
 import com.videomind.module.video.service.VideoFileService;
+import com.videomind.module.video.entity.VideoFile;
 import java.time.LocalDateTime;
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.slf4j.MDC;
 
 @Service
 @RequiredArgsConstructor
 public class ChatServiceImpl implements ChatService {
 
     private static final int RAG_TOP_K = 5;
-    private static final int WINDOW_MESSAGE_SIZE = 8;
-    private static final int SUMMARY_THRESHOLD = 16;
 
     private final ChatSessionMapper chatSessionMapper;
     private final ChatMessageMapper chatMessageMapper;
     private final EmbeddingClient embeddingClient;
     private final KnowledgeSearchRepository knowledgeSearchRepository;
     private final ChatAnswerClient chatAnswerClient;
+    private final ConversationContextService conversationContextService;
+    private final ConversationSummaryService conversationSummaryService;
+    private final ConversationTurnAssembler turnAssembler;
     private final ObjectMapper objectMapper;
     private final VideoFileService videoFileService;
+    private final AgentClientProperties agentProperties;
+    private final AgentChatClient agentChatClient;
 
     @Override
     public ChatSessionCreateResponse createSession(Long videoId, Long userId) {
@@ -78,7 +93,6 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public ChatMessageResponse sendMessage(ChatMessageRequest request, Long userId) {
         ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
         updateSessionTitle(session, request.getQuestion());
@@ -92,9 +106,10 @@ public class ChatServiceImpl implements ChatService {
         userMessage.setCreatedTime(now);
         chatMessageMapper.insert(userMessage);
 
-        List<ChatMessage> recentMessages = listRecentMessages(request.getSessionId(), userId, WINDOW_MESSAGE_SIZE);
-        List<RagReference> references = searchReferences(request.getQuestion(), userId, request.getVideoId());
-        String answer = chatAnswerClient.answer(request.getQuestion(), references, recentMessages, session.getMemorySummary());
+        ConversationContext context = conversationContextService.getContext(request.getSessionId(), userId);
+        ChatOutcome outcome = answer(request, userId, context);
+        List<RagReference> references = outcome.references();
+        String answer = outcome.answer();
         String referencesJson = toJson(references);
 
         ChatMessage assistantMessage = new ChatMessage();
@@ -105,7 +120,9 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setReferencesJson(referencesJson);
         assistantMessage.setCreatedTime(now);
         chatMessageMapper.insert(assistantMessage);
-        refreshSessionMemory(session);
+        conversationSummaryService.compressIfNeeded(session.getId(), userId);
+        conversationContextService.refreshContext(session.getId(), userId);
+        updateSessionUpdatedTime(session);
 
         return ChatMessageResponse.builder()
                 .messageId(assistantMessage.getId())
@@ -119,7 +136,17 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public SseEmitter streamMessage(ChatMessageRequest request, Long userId) {
         SseEmitter emitter = new SseEmitter(0L);
-        CompletableFuture.runAsync(() -> doStreamMessage(request, userId, emitter));
+        String traceId = MDC.get("traceId");
+        CompletableFuture.runAsync(() -> {
+            if (StringUtils.hasText(traceId)) {
+                MDC.put("traceId", traceId);
+            }
+            try {
+                doStreamMessage(request, userId, emitter);
+            } finally {
+                MDC.remove("traceId");
+            }
+        });
         return emitter;
     }
 
@@ -144,16 +171,6 @@ public class ChatServiceImpl implements ChatService {
         return session;
     }
 
-    private List<ChatMessage> listRecentMessages(Long sessionId, Long userId, int limit) {
-        List<ChatMessage> descMessages = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, sessionId)
-                .eq(ChatMessage::getUserId, userId)
-                .orderByDesc(ChatMessage::getCreatedTime)
-                .last("LIMIT " + limit));
-        Collections.reverse(descMessages);
-        return descMessages;
-    }
-
     private List<RagReference> searchReferences(String question, Long userId, Long videoId) {
         float[] queryEmbedding = embeddingClient.embed(question);
         List<KnowledgeSearchResult> results = knowledgeSearchRepository.search(userId, videoId, queryEmbedding, RAG_TOP_K);
@@ -170,6 +187,8 @@ public class ChatServiceImpl implements ChatService {
                 .chunkIndex(result.getChunkIndex())
                 .chunkText(result.getChunkText())
                 .score(result.getScore())
+                .sourceType("VIDEO")
+                .title("视频内容")
                 .build();
     }
 
@@ -187,15 +206,29 @@ public class ChatServiceImpl implements ChatService {
             userMessage.setCreatedTime(now);
             chatMessageMapper.insert(userMessage);
 
-            List<ChatMessage> recentMessages = listRecentMessages(request.getSessionId(), userId, WINDOW_MESSAGE_SIZE);
-            List<RagReference> references = searchReferences(request.getQuestion(), userId, request.getVideoId());
-            String referencesJson = toJson(references);
+            ConversationContext context = conversationContextService.getContext(request.getSessionId(), userId);
             StringBuilder answer = new StringBuilder();
-
-            chatAnswerClient.streamAnswer(request.getQuestion(), references, recentMessages, session.getMemorySummary(), delta -> {
-                answer.append(delta);
-                sendEvent(emitter, "delta", delta);
-            });
+            List<RagReference> references;
+            if (isAgentChatEnabled(request)) {
+                try {
+                    AgentChatClient.AgentChatResult agentResult = invokeAgentChat(request, userId, context, delta -> {
+                        answer.append(delta);
+                        sendEvent(emitter, "delta", delta);
+                    });
+                    references = agentResult.references();
+                    if (answer.isEmpty() && StringUtils.hasText(agentResult.answer())) {
+                        answer.append(agentResult.answer());
+                    }
+                } catch (Exception ex) {
+                    if (!agentProperties.isFallbackOnError() || !answer.isEmpty()) {
+                        throw ex;
+                    }
+                    references = streamLegacyAnswer(request, userId, context, answer, emitter);
+                }
+            } else {
+                references = streamLegacyAnswer(request, userId, context, answer, emitter);
+            }
+            String referencesJson = toJson(references);
 
             ChatMessage assistantMessage = new ChatMessage();
             assistantMessage.setSessionId(request.getSessionId());
@@ -205,7 +238,9 @@ public class ChatServiceImpl implements ChatService {
             assistantMessage.setReferencesJson(referencesJson);
             assistantMessage.setCreatedTime(LocalDateTime.now());
             chatMessageMapper.insert(assistantMessage);
-            refreshSessionMemory(session);
+            conversationSummaryService.compressIfNeeded(session.getId(), userId);
+            conversationContextService.refreshContext(session.getId(), userId);
+            updateSessionUpdatedTime(session);
 
             sendEvent(emitter, "done", ChatMessageResponse.builder()
                     .messageId(assistantMessage.getId())
@@ -229,6 +264,82 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
+    private ChatOutcome answer(ChatMessageRequest request, Long userId, ConversationContext context) {
+        if (isAgentChatEnabled(request)) {
+            try {
+                AgentChatClient.AgentChatResult result = invokeAgentChat(request, userId, context, ignored -> { });
+                return new ChatOutcome(result.answer(), result.references());
+            } catch (Exception ex) {
+                if (!agentProperties.isFallbackOnError()) {
+                    throw ex;
+                }
+            }
+        }
+        List<ChatMessage> recentMessages = turnAssembler.toMessages(context.getRecentTurns(), userId);
+        List<RagReference> references = searchReferences(request.getQuestion(), userId, request.getVideoId());
+        return new ChatOutcome(
+                chatAnswerClient.answer(
+                        request.getQuestion(), references, recentMessages, summaryText(context), request.getAnswerScope()),
+                references
+        );
+    }
+
+    private List<RagReference> streamLegacyAnswer(
+            ChatMessageRequest request,
+            Long userId,
+            ConversationContext context,
+            StringBuilder answer,
+            SseEmitter emitter
+    ) {
+        List<ChatMessage> recentMessages = turnAssembler.toMessages(context.getRecentTurns(), userId);
+        List<RagReference> references = searchReferences(request.getQuestion(), userId, request.getVideoId());
+        chatAnswerClient.streamAnswer(
+                request.getQuestion(), references, recentMessages, summaryText(context), request.getAnswerScope(), delta -> {
+            answer.append(delta);
+            sendEvent(emitter, "delta", delta);
+        });
+        return references;
+    }
+
+    private AgentChatClient.AgentChatResult invokeAgentChat(
+            ChatMessageRequest request,
+            Long userId,
+            ConversationContext context,
+            java.util.function.Consumer<String> onDelta
+    ) {
+        VideoFile video = videoFileService.getVideoDetail(request.getVideoId(), userId);
+        List<Map<String, String>> recentTurns = new ArrayList<>();
+        for (ConversationTurn turn : context.getRecentTurns()) {
+            Map<String, String> item = new LinkedHashMap<>();
+            item.put("question", turn.getQuestion());
+            item.put("answer", turn.getAnswer());
+            recentTurns.add(item);
+        }
+        AgentChatClient.AgentChatRequest agentRequest = new AgentChatClient.AgentChatRequest(
+                video.getId(),
+                video.getAgentKnowledgeBaseId(),
+                request.getSessionId(),
+                request.getQuestion(),
+                AnswerScopePolicy.normalize(request.getAnswerScope()),
+                AnswerScopePolicy.instruction(request.getAnswerScope()),
+                summaryText(context),
+                recentTurns
+        );
+        return agentChatClient.chat(
+                agentRequest,
+                userId,
+                "chat:session:" + request.getSessionId() + ":request:" + UUID.randomUUID(),
+                null,
+                onDelta
+        );
+    }
+
+    private boolean isAgentChatEnabled(ChatMessageRequest request) {
+        return "ADVANCED".equalsIgnoreCase(request.getApplicationMode())
+                && agentProperties.isEnabled()
+                && agentProperties.isChatEnabled();
+    }
+
     private String toJson(List<RagReference> references) {
         try {
             return objectMapper.writeValueAsString(references);
@@ -237,30 +348,8 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
-    private void refreshSessionMemory(ChatSession session) {
-        List<ChatMessage> allMessages = chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, session.getId())
-                .eq(ChatMessage::getUserId, session.getUserId())
-                .orderByAsc(ChatMessage::getCreatedTime));
-        if (allMessages.size() < SUMMARY_THRESHOLD) {
-            updateSessionUpdatedTime(session);
-            return;
-        }
-
-        int compactEnd = Math.max(0, allMessages.size() - WINDOW_MESSAGE_SIZE);
-        StringBuilder summary = new StringBuilder();
-        if (StringUtils.hasText(session.getMemorySummary())) {
-            summary.append(session.getMemorySummary()).append('\n');
-        }
-        summary.append("历史增量摘要：");
-        allMessages.subList(0, compactEnd).stream()
-                .limit(6)
-                .forEach(message -> summary
-                        .append('[').append(message.getRole()).append(']')
-                        .append(shorten(message.getContent(), 80))
-                        .append(' '));
-        session.setMemorySummary(shorten(summary.toString(), 1200));
-        updateSessionUpdatedTime(session);
+    private String summaryText(ConversationContext context) {
+        return context.getSummary() == null ? null : context.getSummary().getSummaryText();
     }
 
     private void updateSessionUpdatedTime(ChatSession session) {
@@ -308,5 +397,8 @@ public class ChatServiceImpl implements ChatService {
             return text;
         }
         return text.substring(0, maxLength) + "...";
+    }
+
+    private record ChatOutcome(String answer, List<RagReference> references) {
     }
 }

@@ -174,7 +174,7 @@ Write-Host ""
 Write-Host "VideoMind is running." -ForegroundColor Cyan
 Write-Host "Frontend:     http://localhost:5173"
 Write-Host "Backend API:  http://localhost:8080"
-Write-Host "MinIO:        http://localhost:9001"
+Write-Host "MinIO:        http://localhost:9002"
 Write-Host "RedisInsight: http://localhost:8001"
 Write-Host "Logs:         $logDir"
 

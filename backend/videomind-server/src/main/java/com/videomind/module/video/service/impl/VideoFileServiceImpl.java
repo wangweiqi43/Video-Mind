@@ -9,10 +9,15 @@ import com.videomind.config.RateLimitProperties;
 import com.videomind.infrastructure.ratelimit.RateLimitService;
 import com.videomind.infrastructure.storage.ObjectStorageService;
 import com.videomind.infrastructure.storage.dto.StoredObject;
+import com.videomind.module.agent.entity.VideoAgentTask;
+import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
+import com.videomind.module.chat.entity.ConversationSummary;
 import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.mapper.ChatSessionMapper;
+import com.videomind.module.chat.mapper.ConversationSummaryMapper;
+import com.videomind.module.chat.service.ConversationContextService;
 import com.videomind.module.knowledge.repository.KnowledgeStatusRepository;
 import com.videomind.module.knowledge.repository.KnowledgeVectorRepository;
 import com.videomind.module.task.entity.AiSummaryResult;
@@ -58,6 +63,9 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
     private final KnowledgeStatusRepository knowledgeStatusRepository;
     private final ChatSessionMapper chatSessionMapper;
     private final ChatMessageMapper chatMessageMapper;
+    private final ConversationSummaryMapper conversationSummaryMapper;
+    private final ConversationContextService conversationContextService;
+    private final VideoAgentTaskMapper videoAgentTaskMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -160,6 +168,9 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
     @Transactional(rollbackFor = Exception.class)
     public void deleteVideo(Long videoId, Long userId) {
         VideoFile videoFile = getVideoDetail(videoId, userId);
+        videoAgentTaskMapper.delete(Wrappers.<VideoAgentTask>lambdaQuery()
+                .eq(VideoAgentTask::getVideoId, videoId)
+                .eq(VideoAgentTask::getUserId, userId));
         List<TaskRecord> tasks = taskRecordMapper.selectList(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
                 .eq(TaskRecord::getVideoId, videoId));
@@ -193,6 +204,9 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
             chatMessageMapper.delete(Wrappers.<ChatMessage>lambdaQuery()
                     .eq(ChatMessage::getUserId, userId)
                     .in(ChatMessage::getSessionId, sessionIds));
+            conversationSummaryMapper.delete(Wrappers.<ConversationSummary>lambdaQuery()
+                    .in(ConversationSummary::getConversationId, sessionIds));
+            sessionIds.forEach(conversationContextService::evictContext);
             chatSessionMapper.delete(Wrappers.<ChatSession>lambdaQuery()
                     .eq(ChatSession::getUserId, userId)
                     .eq(ChatSession::getVideoId, videoId));

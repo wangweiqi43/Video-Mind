@@ -4,6 +4,8 @@ VideoMind 是一个本地可运行的 AI 视频内容理解平台。当前仓库
 
 当前也已补充 Vue 3 前端工作台，支持视频上传、AI 总结、知识库向量化和智能助手对话。
 
+项目现已加入可灰度启用的 Agent Platform 迁移层：ASR 后可将转录和视频的短期预签名地址提交给 Agent Platform，聊天可切换为 Agent SSE，且支持 Webhook 回写摘要/索引/PPT 状态。所有新链路默认关闭并保留旧实现回退，配置与协议见 [Agent Platform 迁移说明](docs/agent-platform-migration.md)。
+
 ## 已完成内容
 
 - Spring Boot 3 + Java 17 后端工程骨架
@@ -19,6 +21,9 @@ VideoMind 是一个本地可运行的 AI 视频内容理解平台。当前仓库
 - `GET /api/knowledge/status/{taskId}` 查询向量化状态和 chunk 数量
 - `POST /api/chat/message` 生成 query embedding，检索视频知识片段，返回 Mock 回答和引用来源
 - 智能助手支持最近窗口记忆，并在长会话时维护轻量历史摘要
+- Agent Client 统一处理签名、租户/用户上下文、幂等键、超时重试、SSE、错误码和 Trace ID
+- 前端支持普通/高级双模式：普通模式使用“仅知识库 / 知识库扩展”，高级模式预留 Agent 对话、联网研究、PPT 与报告导出
+- 视频支持 Agent PPT 参数配置、进度、失败重试、下载和历史版本
 - `POST /api/videos/multipart/init` 初始化分片上传会话
 - `POST /api/videos/multipart/{uploadId}/chunk?partNumber=1` 上传分片，Redis Bitmap 记录断点状态
 - `GET /api/videos/multipart/{uploadId}/status` 查询已上传分片

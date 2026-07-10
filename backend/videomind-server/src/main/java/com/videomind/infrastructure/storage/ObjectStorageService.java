@@ -2,6 +2,7 @@ package com.videomind.infrastructure.storage;
 
 import com.videomind.infrastructure.storage.dto.StoredObject;
 import java.io.InputStream;
+import java.time.Duration;
 
 public interface ObjectStorageService {
 
@@ -12,4 +13,6 @@ public interface ObjectStorageService {
     boolean objectExists(String bucket, String objectKey);
 
     void removeObject(String bucket, String objectKey);
+
+    String presignGetUrl(String bucket, String objectKey, Duration expiry);
 }

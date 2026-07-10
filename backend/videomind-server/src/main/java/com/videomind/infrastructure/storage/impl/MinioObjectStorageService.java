@@ -6,12 +6,15 @@ import com.videomind.infrastructure.storage.ObjectStorageService;
 import com.videomind.infrastructure.storage.dto.StoredObject;
 import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
+import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import java.io.InputStream;
+import java.time.Duration;
+import io.minio.http.Method;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -84,6 +87,24 @@ public class MinioObjectStorageService implements ObjectStorageService {
                     .build());
         } catch (Exception ex) {
             throw new BizException(500, "删除 MinIO 视频失败：" + ex.getMessage());
+        }
+    }
+
+    @Override
+    public String presignGetUrl(String bucket, String objectKey, Duration expiry) {
+        if (!StringUtils.hasText(bucket) || !StringUtils.hasText(objectKey)) {
+            throw new BizException(400, "无法为缺失的 MinIO 对象生成访问地址");
+        }
+        try {
+            int seconds = Math.toIntExact(Math.max(1, Math.min(expiry.toSeconds(), 604800)));
+            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+                    .method(Method.GET)
+                    .bucket(bucket)
+                    .object(objectKey)
+                    .expiry(seconds)
+                    .build());
+        } catch (Exception ex) {
+            throw new BizException(500, "生成 MinIO 短期访问地址失败：" + ex.getMessage());
         }
     }
 
