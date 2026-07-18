@@ -318,6 +318,10 @@ function videoStatus(video) {
       </div>
     </aside>
 
+    <div class="advanced-toolbar">
+      <slot name="toolbar" />
+    </div>
+
     <article class="advanced-summary">
       <header>
         <div>
@@ -369,9 +373,10 @@ function videoStatus(video) {
       </header>
 
       <div class="advanced-notice">
-        <strong>{{ capabilities.advanced_chat ? 'Agent Platform 已接入' : 'Agent Platform 尚未启用' }}</strong>
+        <strong>{{ capabilities.agent_enabled ? 'Agent Platform 已接入' : 'Agent Platform 未连接' }}</strong>
         <span v-if="capabilities.advanced_chat">高级问答由独立 Agent Platform 执行；研究报告进入高级模式后自动生成或恢复。</span>
-        <span v-else>高级模式会自动生成研究报告；配置 Agent Platform 后还可使用高级知识库问答。</span>
+        <span v-else-if="capabilities.agent_enabled">VideoMind 已完成平台连接与账户授权，高级问答等功能将按独立能力开关开放。</span>
+        <span v-else>完成 Agent Platform 连接配置后，可使用高级知识库问答、研究报告与内容生成能力。</span>
       </div>
 
       <div class="agent-conversation">
@@ -421,7 +426,7 @@ function videoStatus(video) {
           type="textarea"
           :autosize="{ minRows: 2, maxRows: 5 }"
           :disabled="!capabilities.advanced_chat || !selectedVideo || sending"
-          :placeholder="capabilities.advanced_chat ? '向 Agent 询问当前视频内容（Ctrl + Enter 发送）' : '配置 Agent Platform 后可使用高级问答'"
+          :placeholder="capabilities.advanced_chat ? '向 Agent 询问当前视频内容（Ctrl + Enter 发送）' : capabilities.agent_enabled ? 'Agent Platform 已接入，高级问答开关当前关闭' : '连接 Agent Platform 后可使用高级问答'"
           resize="none"
           @keyup.ctrl.enter="sendAdvancedMessage"
         />
@@ -450,6 +455,10 @@ function videoStatus(video) {
 .advanced-layout {
   display: grid;
   grid-template-columns: minmax(210px, 240px) minmax(380px, 0.9fr) minmax(440px, 1.1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "videos toolbar toolbar"
+    "videos summary agent";
   height: 100%;
   min-height: 0;
   border-top: 1px solid rgba(231, 185, 111, 0.18);
@@ -466,9 +475,28 @@ function videoStatus(video) {
 }
 
 .advanced-videos {
+  grid-area: videos;
   padding: 22px 14px 18px 0;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
+}
+
+.advanced-toolbar {
+  grid-area: toolbar;
+  min-width: 0;
+  padding-left: 14px;
+}
+
+.advanced-toolbar :deep(.control-panel) {
+  height: 100%;
+}
+
+.advanced-summary {
+  grid-area: summary;
+}
+
+.agent-panel {
+  grid-area: agent;
 }
 
 .advanced-column-title {

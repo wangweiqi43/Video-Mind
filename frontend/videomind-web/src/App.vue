@@ -5,6 +5,7 @@ import SparkMD5 from 'spark-md5'
 import { api } from './api'
 import ModeSwitcher from './components/ModeSwitcher.vue'
 import AdvancedModeLayout from './components/AdvancedModeLayout.vue'
+import VideoControlPanel from './components/VideoControlPanel.vue'
 
 const state = reactive({
   videos: [],
@@ -13,6 +14,7 @@ const state = reactive({
     normal_chat: true,
     knowledge_extended: true,
     advanced_mode: true,
+    agent_enabled: false,
     advanced_chat: false,
     web_search: false,
     advanced_report: false,
@@ -55,7 +57,6 @@ const TASK_POLL_TIMEOUT_MS = 15 * 60 * 1000
 const UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 const VIDEO_CHAT_SESSION_KEY = 'videomind:video-chat-sessions'
 
-const selectedVideoTitle = computed(() => state.selectedVideo?.originalFilename || '尚未选择视频')
 const canAnalyze = computed(() => Boolean(state.selectedVideo?.id) && !state.taskLoading)
 const canSendQuestion = computed(() => Boolean(state.selectedVideo?.id) && !state.loadingChat && !state.sessionDetailLoading)
 const chatPlaceholder = computed(() => {
@@ -74,7 +75,6 @@ const summaryPreview = computed(() => {
   return state.resultLoading ? '正在读取历史摘要...' : '解析成功后，这里会出现 AI 视频摘要。'
 })
 const structuredSummary = computed(() => parseSummary(state.taskResult?.summaryText))
-const autoVectorizeLabel = computed(() => state.autoVectorize ? '解析后入库' : '仅解析')
 
 onMounted(async () => {
   await Promise.all([loadVideos(), loadCapabilities()])
@@ -833,62 +833,21 @@ function compactParagraphs(lines) {
       </aside>
 
       <section class="workbench">
-        <section class="control-panel panel">
-          <div class="control-block">
-            <span class="control-label">当前视频</span>
-            <strong>{{ selectedVideoTitle }}</strong>
-            <small v-if="state.selectedVideo">ID {{ state.selectedVideo.id }} · {{ (state.selectedVideo.fileSize / 1024).toFixed(1) }} KB</small>
-            <small v-else>先选择或上传一个本地视频</small>
-          </div>
-
-          <div class="control-actions">
-            <el-upload class="compact-upload" :show-file-list="false" :http-request="handleUpload" accept="video/*">
-              <el-button class="gold-button" round :loading="state.uploading">选择视频</el-button>
-            </el-upload>
-            <el-button
-              class="gold-button"
-              round
-              :disabled="!canAnalyze"
-              :loading="state.taskLoading"
-              @click="createAnalyzeTask"
-            >
-              AI 视频总结
-            </el-button>
-            <el-button
-              class="ghost-button"
-              round
-              :disabled="!state.selectedVideo?.id"
-              @click="playCurrentVideo"
-            >
-              播放视频
-            </el-button>
-            <div class="knowledge-tools">
-              <div class="control-knowledge">
-                <span class="control-label">知识库</span>
-                <div class="knowledge-inline">
-                  <span><strong>{{ state.vectorStatus?.chunkCount ?? 0 }}</strong> Chunks</span>
-                  <i
-                    class="knowledge-dot"
-                    :class="{ vectorized: state.vectorStatus?.vectorized }"
-                    :title="state.vectorStatus?.vectorized ? '已入库' : '未入库'"
-                  />
-                </div>
-              </div>
-              <el-button class="mode-button" round @click="state.autoVectorize = !state.autoVectorize">
-                {{ autoVectorizeLabel }}
-              </el-button>
-              <el-button
-                class="ghost-button"
-                round
-                :disabled="state.task?.taskStatus !== 'SUCCESS'"
-                @click="vectorizeCurrentTask"
-              >
-                加入知识库
-              </el-button>
-            </div>
-          </div>
-          <el-progress v-if="state.uploading" class="upload-progress" :percentage="state.uploadProgress" :stroke-width="6" />
-        </section>
+        <VideoControlPanel
+          :selected-video="state.selectedVideo"
+          :uploading="state.uploading"
+          :upload-progress="state.uploadProgress"
+          :can-analyze="canAnalyze"
+          :task-loading="state.taskLoading"
+          :task="state.task"
+          :vector-status="state.vectorStatus"
+          :auto-vectorize="state.autoVectorize"
+          @upload="handleUpload"
+          @analyze="createAnalyzeTask"
+          @play="playCurrentVideo"
+          @toggle-auto-vectorize="state.autoVectorize = !state.autoVectorize"
+          @vectorize="vectorizeCurrentTask"
+        />
 
         <section class="workspace">
           <article class="panel result-card">
@@ -1099,6 +1058,24 @@ function compactParagraphs(lines) {
       :selected-video="state.selectedVideo"
       :capabilities="state.capabilities"
       @select-video="selectVideo"
-    />
+    >
+      <template #toolbar>
+        <VideoControlPanel
+          :selected-video="state.selectedVideo"
+          :uploading="state.uploading"
+          :upload-progress="state.uploadProgress"
+          :can-analyze="canAnalyze"
+          :task-loading="state.taskLoading"
+          :task="state.task"
+          :vector-status="state.vectorStatus"
+          :auto-vectorize="state.autoVectorize"
+          @upload="handleUpload"
+          @analyze="createAnalyzeTask"
+          @play="playCurrentVideo"
+          @toggle-auto-vectorize="state.autoVectorize = !state.autoVectorize"
+          @vectorize="vectorizeCurrentTask"
+        />
+      </template>
+    </AdvancedModeLayout>
   </main>
 </template>

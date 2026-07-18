@@ -14,6 +14,8 @@ public class AgentCapabilitiesResponse {
     private boolean knowledgeExtended;
     @JsonProperty("advanced_mode")
     private boolean advancedMode;
+    @JsonProperty("agent_enabled")
+    private boolean agentEnabled;
     @JsonProperty("advanced_chat")
     private boolean advancedChat;
     @JsonProperty("web_search")
