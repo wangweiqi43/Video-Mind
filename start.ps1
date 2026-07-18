@@ -9,7 +9,15 @@ $runtimeDir = Join-Path $repoRoot "runtime"
 $logDir = Join-Path $runtimeDir "logs"
 $backendDir = Join-Path $repoRoot "backend\videomind-server"
 $frontendDir = Join-Path $repoRoot "frontend\videomind-web"
-$maven = Join-Path $runtimeDir "tools\apache-maven-3.9.9\bin\mvn.cmd"
+$mavenCandidates = @(
+    "E:\Maven\bin\mvn.cmd",
+    (Join-Path $runtimeDir "tools\apache-maven-3.9.9\bin\mvn.cmd")
+)
+$maven = $mavenCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+$nodeDir = "E:\NodeJS"
+$npm = Join-Path $nodeDir "npm.cmd"
+$javaHome = "E:\Java"
+$ffmpeg = "E:\FFmpeg\bin\ffmpeg.exe"
 $backendLog = Join-Path $logDir "backend-start.out.log"
 $backendErrorLog = Join-Path $logDir "backend-start.err.log"
 $frontendLog = Join-Path $logDir "frontend-start.out.log"
@@ -88,12 +96,25 @@ function Start-DockerDesktop {
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "docker.exe was not found in PATH."
 }
-if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
-    throw "npm.cmd was not found in PATH."
+if (-not (Test-Path -LiteralPath $npm)) {
+    $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if (-not $npmCommand) {
+        throw "npm.cmd was not found at E:\NodeJS or in PATH."
+    }
+    $npm = $npmCommand.Source
 }
-if (-not (Test-Path -LiteralPath $maven)) {
-    throw "Bundled Maven was not found: $maven"
+if (-not $maven) {
+    throw "Maven was not found at E:\Maven or in runtime\tools."
 }
+
+if (Test-Path -LiteralPath (Join-Path $javaHome "bin\java.exe")) {
+    $env:JAVA_HOME = $javaHome
+    $env:PATH = "$javaHome\bin;$env:PATH"
+}
+if (Test-Path -LiteralPath $ffmpeg) {
+    $env:FFMPEG_BINARY_PATH = $ffmpeg
+}
+$env:PATH = "$nodeDir;$env:PATH"
 
 if (-not (Test-DockerReady)) {
     Start-DockerDesktop
@@ -118,6 +139,7 @@ $env:VIDEOMIND_SUMMARY_MODE = "real"
 $env:VIDEOMIND_EMBEDDING_MODE = "real"
 $env:VIDEOMIND_CHAT_MODE = "real"
 $env:KNOWLEDGE_TTL_SECONDS = "2592000"
+$env:REDIS_PORT = "6380"
 
 if (Test-HttpEndpoint -Url "http://localhost:8080/api/videos/list") {
     Write-Host "[OK] Backend is already running." -ForegroundColor Green
@@ -141,7 +163,7 @@ if (Test-HttpEndpoint -Url "http://localhost:8080/api/videos/list") {
 
 if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules"))) {
     Write-Host "[..] Installing frontend dependencies..."
-    & npm.cmd install --prefix $frontendDir
+    & $npm install --prefix $frontendDir
     if ($LASTEXITCODE -ne 0) {
         throw "Frontend dependency installation failed."
     }
@@ -157,7 +179,7 @@ if (Test-HttpEndpoint -Url "http://localhost:5173") {
 
     Write-Host "[..] Starting frontend..."
     $frontendProcess = Start-Process `
-        -FilePath "npm.cmd" `
+        -FilePath $npm `
         -ArgumentList @("run", "dev") `
         -WorkingDirectory $frontendDir `
         -RedirectStandardOutput $frontendLog `

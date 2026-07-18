@@ -2,9 +2,11 @@
 
 VideoMind 是一个本地可运行的 AI 视频内容理解平台。当前仓库已完成七个阶段：后端基础工程、普通视频上传到 MinIO、RocketMQ 异步任务流转、本地 FFmpeg 音频提取、Redisearch 向量化、智能助手 RAG 问答，以及分片上传、Redisson 锁、限流和重试兜底。
 
+当前已完成 MindAgent 端到端接入：VideoMind 提供真实个人账号、右上角 MindAgent 绑定入口、OAuth2 授权码 + PKCE、令牌加密与自动刷新、历史视频按需同步，以及由 MindAgent 托管的高级会话。普通模式仍使用原有本地链路。
+
 当前也已补充 Vue 3 前端工作台，支持视频上传、AI 总结、知识库向量化和智能助手对话。
 
-项目现已加入可灰度启用的 Agent Platform 迁移层：ASR 后可将转录和视频的短期预签名地址提交给 Agent Platform，聊天可切换为 Agent SSE，且支持 Webhook 回写摘要/索引/PPT 状态。所有新链路默认关闭并保留旧实现回退，配置与协议见 [Agent Platform 迁移说明](docs/agent-platform-migration.md)。
+项目现已加入可灰度启用的 Agent Platform 迁移层：ASR 后可将转录文本的短期预签名地址提交给 Agent Platform，高级模式聊天可切换为 Agent SSE，且支持 Webhook 回写摘要/索引/PPT 状态。普通模式继续使用原有 RAG 链路。联网搜索是高级模式的单次请求能力，由 Agent Platform 执行，VideoMind 只透传开关并接收回答与 Web 引用。
 
 ## 已完成内容
 
@@ -61,7 +63,7 @@ npm run dev
 
 MinIO 控制台：
 
-- Console: `http://localhost:9001`
+- Console: `http://localhost:9002`
 - Endpoint: `http://localhost:9000`
 - Username: `minioadmin`
 - Password: `minioadmin`
@@ -75,7 +77,7 @@ RocketMQ：
 
 Redis Stack：
 
-- Redis: `localhost:6379`
+- Redis: `localhost:6380`（容器内仍为 `6379`，避免占用本机已有 Redis）
 - RedisInsight: `http://localhost:8001`
 - RediSearch index: `idx:videomind_knowledge`
 
@@ -137,6 +139,19 @@ set CHAT_MODEL=deepseek-ai/DeepSeek-V4-Flash
 
 当前真实客户端默认兼容常见的 Bearer Token、OpenAI-like `messages`、`choices[0].message.content` 和 `data[0].embedding` 响应格式。如果你提供的 API 字段不同，只需要修改对应 real client 的 `buildRequest` 或 `parseResponse/parseContent/parseVector` 方法。
 
+Agent Platform 尚未部署时保持相关开关为 `false`。独立 Agent 项目就绪后，至少配置：
+
+```bash
+set VIDEOMIND_AGENT_ENABLED=true
+set VIDEOMIND_AGENT_CHAT_ENABLED=true
+set VIDEOMIND_AGENT_WEB_SEARCH_ENABLED=true
+set AGENT_PLATFORM_BASE_URL=http://localhost:8090
+set AGENT_PLATFORM_API_KEY=your_agent_api_key
+set AGENT_PLATFORM_SIGNING_SECRET=your_signing_secret
+```
+
+其中 `VIDEOMIND_AGENT_WEB_SEARCH_ENABLED` 只控制能力是否对前端开放；真正是否搜索由每次高级聊天请求的 `webSearchEnabled` 决定，并以 `toolPolicy.webSearch` 传给 Agent。
+
 ## 基础验证
 
 ```bash
@@ -175,5 +190,7 @@ curl -X POST http://localhost:8080/api/videos/multipart/<uploadId>/complete
 ## Docker 注意事项
 
 - 如果本机已有 MySQL 占用 `3306`，本项目 Docker MySQL 映射到 `3307`。
+- Docker 持久化数据默认保存在 `E:/VideoMindData`，可通过 `VIDEOMIND_DATA_ROOT` 调整。
+- 本机工具默认使用 `E:/Java`、`E:/Maven`、`E:/NodeJS` 和 `E:/FFmpeg`。
 - RocketMQ 使用 `apache/rocketmq:4.9.7`，本地开发下以 root 用户运行，避免 Windows Docker volume 权限导致 broker 反复重启。
 - 如果 Docker Desktop 提示 WSL integration stopped，可执行 `wsl --shutdown` 后重启 Docker Desktop；必要时重启 Docker Desktop 进程。

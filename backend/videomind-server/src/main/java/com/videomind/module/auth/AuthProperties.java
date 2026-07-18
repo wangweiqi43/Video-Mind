@@ -1,0 +1,1 @@
+package com.videomind.module.auth;import lombok.Data;import org.springframework.boot.context.properties.ConfigurationProperties;@Data@ConfigurationProperties("videomind.auth")public class AuthProperties{private String jwtSecret;private long accessMinutes=15;private long refreshDays=30;private String tokenEncryptionKey;private String frontendUrl="http://localhost:5173";}

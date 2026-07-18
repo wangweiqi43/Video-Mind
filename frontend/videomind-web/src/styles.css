@@ -782,6 +782,15 @@ h3 {
   overflow: hidden;
 }
 
+.conversation > .messages,
+.conversation > .history-state {
+  grid-row: 2;
+}
+
+.conversation > .composer {
+  grid-row: 3;
+}
+
 .messages {
   display: flex;
   flex-direction: column;

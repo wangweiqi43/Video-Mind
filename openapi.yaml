@@ -400,6 +400,26 @@ paths:
           schema:
             type: string
           example: 这个视频主要讲了什么？
+        - name: answerScope
+          in: query
+          required: false
+          schema:
+            type: string
+            default: KNOWLEDGE_EXTENDED
+        - name: applicationMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [NORMAL, ADVANCED]
+            default: NORMAL
+        - name: webSearchEnabled
+          in: query
+          required: false
+          description: 仅高级模式有效；由 Agent Platform 执行联网搜索。
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: SSE 事件流。事件包括 delta、done、error。
@@ -1090,6 +1110,17 @@ components:
         question:
           type: string
           example: 这个视频主要讲了什么？
+        answerScope:
+          type: string
+          example: KNOWLEDGE_EXTENDED
+        applicationMode:
+          type: string
+          enum: [NORMAL, ADVANCED]
+          default: NORMAL
+        webSearchEnabled:
+          type: boolean
+          default: false
+          description: 仅高级模式有效；VideoMind 将开关透传给 Agent Platform。
 
     RagReference:
       type: object

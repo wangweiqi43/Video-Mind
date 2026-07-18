@@ -30,7 +30,7 @@ public class ChatController {
 
     @PostMapping("/session")
     public ApiResponse<ChatSessionCreateResponse> createSession(@Valid @RequestBody ChatSessionCreateRequest request) {
-        return ApiResponse.success(chatService.createSession(request.getVideoId(), MockUserContext.currentUserId()));
+        return ApiResponse.success(chatService.createSession(request.getVideoId(), request.getApplicationMode(), MockUserContext.currentUserId()));
     }
 
     @GetMapping("/session/list")
@@ -54,7 +54,8 @@ public class ChatController {
             @RequestParam Long videoId,
             @RequestParam String question,
             @RequestParam(defaultValue = "KNOWLEDGE_EXTENDED") String answerScope,
-            @RequestParam(defaultValue = "NORMAL") String applicationMode
+            @RequestParam(defaultValue = "NORMAL") String applicationMode,
+            @RequestParam(defaultValue = "false") boolean webSearchEnabled
     ) {
         ChatMessageRequest request = new ChatMessageRequest();
         request.setSessionId(sessionId);
@@ -62,6 +63,7 @@ public class ChatController {
         request.setQuestion(question);
         request.setAnswerScope(answerScope);
         request.setApplicationMode(applicationMode);
+        request.setWebSearchEnabled(webSearchEnabled);
         return chatService.streamMessage(request, MockUserContext.currentUserId());
     }
 

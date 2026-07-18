@@ -43,6 +43,24 @@ public class AgentTaskClient {
         return taskResult(response);
     }
 
+    public AgentTaskResult createResearch(Long videoId, String knowledgeBaseId, String question,
+                                          boolean webSearch, int targetLength, Long userId,
+                                          String idempotencyKey, String traceId) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("question", question);
+        payload.put("knowledgeBaseIds", java.util.List.of(knowledgeBaseId));
+        payload.put("webSearch", webSearch);
+        payload.put("targetLength", targetLength);
+        JsonNode response = apiClient.post("/v1/research", payload,
+                AgentRequestContext.of(properties.getTenantId(), userId, idempotencyKey, traceId));
+        return taskResult(response);
+    }
+
+    public JsonNode researchReport(String reportId, Long userId) {
+        return apiClient.get("/v1/research/" + reportId,
+                AgentRequestContext.of(properties.getTenantId(), userId, null, null));
+    }
+
     private AgentTaskResult taskResult(JsonNode response) {
         String taskId = response.path("taskId").asText();
         if (!StringUtils.hasText(taskId)) {
@@ -62,10 +80,14 @@ public class AgentTaskClient {
             Long sourceTaskId,
             Integer transcriptVersion,
             String transcriptUrl,
-            String videoUrl,
             String language,
+            Boolean generateSummary,
             Map<String, Object> metadata
     ) {
+        public AgentIngestRequest(Long videoId, Long sourceTaskId, Integer transcriptVersion,
+                                  String transcriptUrl, String language, Map<String, Object> metadata) {
+            this(videoId, sourceTaskId, transcriptVersion, transcriptUrl, language, true, metadata);
+        }
     }
 
     public record PresentationOptions(

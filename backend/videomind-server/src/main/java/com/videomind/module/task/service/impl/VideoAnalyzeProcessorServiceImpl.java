@@ -34,6 +34,7 @@ import java.net.SocketTimeoutException;
 import java.time.LocalDateTime;
 import java.time.Duration;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
@@ -236,18 +237,19 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
         Duration expiry = Duration.ofSeconds(agentProperties.getPresignedUrlExpirySeconds());
         String transcriptUrl = objectStorageService.presignGetUrl(
                 transcriptObject.getBucket(), transcriptObject.getObjectKey(), expiry);
-        String videoUrl = objectStorageService.presignGetUrl(
-                videoFile.getMinioBucket(), videoFile.getMinioObjectKey(), expiry);
 
+        Map<String, Object> ingestMetadata = new LinkedHashMap<>();
+        ingestMetadata.put("filename", videoFile.getOriginalFilename());
+        ingestMetadata.put("fileMd5", videoFile.getFileMd5());
+        ingestMetadata.put("durationSeconds", videoFile.getDurationSeconds());
         AgentTaskClient.AgentTaskResult result = agentTaskClient.ingest(
                 new AgentTaskClient.AgentIngestRequest(
                         videoFile.getId(),
                         taskRecord.getId(),
                         transcriptVersion,
                         transcriptUrl,
-                        videoUrl,
                         transcription.getLanguage(),
-                        Map.of("filename", videoFile.getOriginalFilename(), "fileMd5", videoFile.getFileMd5())
+                        ingestMetadata
                 ),
                 taskRecord.getUserId(),
                 "ingest:video:" + videoFile.getId() + ":transcript:" + transcriptVersion,

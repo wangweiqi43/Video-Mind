@@ -19,6 +19,39 @@ public class AgentChatClient {
     private final AgentClientProperties properties;
     private final ObjectMapper objectMapper;
 
+    public String createConversation(String knowledgeBaseId, Long userId, String idempotencyKey, String traceId) {
+        JsonNode response = apiClient.post(
+                "/v1/conversations",
+                Map.of("title", "VideoMind 高级会话", "knowledgeBaseIds", List.of(knowledgeBaseId)),
+                AgentRequestContext.of(properties.getTenantId(), userId, idempotencyKey, traceId)
+        );
+        String id = response.path("id").asText();
+        if (!StringUtils.hasText(id)) {
+            throw new AgentClientException("INVALID_RESPONSE", "MindAgent 创建会话响应缺少 id", null, false);
+        }
+        return id;
+    }
+
+    public AgentChatResult chatConversation(
+            String conversationId, String question, AgentToolPolicy toolPolicy, Long userId,
+            String idempotencyKey, String traceId, Consumer<String> onDelta
+    ) {
+        StringBuilder answer = new StringBuilder();
+        List<RagReference> references = new ArrayList<>();
+        apiClient.postSse(
+                "/v1/conversations/" + conversationId + "/messages:stream",
+                Map.of("content", question, "toolPolicy", toolPolicy),
+                AgentRequestContext.of(properties.getTenantId(), userId, idempotencyKey, traceId),
+                event -> handleEvent(event, answer, references, onDelta)
+        );
+        return new AgentChatResult(answer.toString(), List.copyOf(references));
+    }
+
+    public JsonNode listMessages(String conversationId, Long userId, String traceId) {
+        return apiClient.get("/v1/conversations/" + conversationId + "/messages",
+                AgentRequestContext.of(properties.getTenantId(), userId, "read-messages", traceId));
+    }
+
     public AgentChatResult chat(
             AgentChatRequest request,
             Long userId,
@@ -129,9 +162,16 @@ public class AgentChatClient {
             String question,
             String answerScope,
             String answerPolicy,
+            AgentToolPolicy toolPolicy,
             String conversationSummary,
             List<Map<String, String>> recentTurns
     ) {
+    }
+
+    public record AgentToolPolicy(boolean knowledgeBase, boolean webSearch, boolean deepResearch, boolean pptGeneration) {
+        public AgentToolPolicy(boolean knowledgeBase, boolean webSearch, boolean deepResearch) {
+            this(knowledgeBase, webSearch, deepResearch, false);
+        }
     }
 
     public record AgentChatResult(String answer, List<RagReference> references) {

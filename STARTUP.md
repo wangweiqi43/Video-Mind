@@ -35,7 +35,7 @@ powershell -ExecutionPolicy Bypass -File E:\VideoMind\stop.ps1 -KeepDocker
 在项目根目录执行：
 
 ```powershell
-cd C:\Users\Administrator\Documents\VideoMind
+cd E:\VideoMind
 docker compose up -d mysql minio rocketmq-namesrv rocketmq-broker redis-stack
 ```
 
@@ -53,13 +53,13 @@ docker compose up -d mysql minio rocketmq-namesrv rocketmq-broker redis-stack
 docker ps
 ```
 
-## 2. 启动后端
+## 2. 启动应用
 
-项目已经准备了后端启动脚本：
+推荐使用一键脚本，它会检查并启动 Docker 依赖、后端和前端：
 
 ```powershell
-cd C:\Users\Administrator\Documents\VideoMind
-powershell -ExecutionPolicy Bypass -File .\runtime\start-backend.ps1
+cd E:\VideoMind
+powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
 后端默认端口：
@@ -77,15 +77,15 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8080/api/videos/list
 后端日志位置：
 
 ```text
-C:\Users\Administrator\Documents\VideoMind\runtime\logs\backend-20260531.log
+E:\VideoMind\runtime\logs\backend-start.out.log
 ```
 
-## 3. 启动前端
+## 3. 单独启动前端
 
-另开一个终端，执行：
+仅需单独调试前端时，另开一个终端执行：
 
 ```powershell
-cd C:\Users\Administrator\Documents\VideoMind\frontend\videomind-web
+cd E:\VideoMind\frontend\videomind-web
 npm run dev
 ```
 
@@ -98,7 +98,7 @@ http://localhost:5173
 前端日志位置：
 
 ```text
-C:\Users\Administrator\Documents\VideoMind\runtime\logs\frontend.log
+E:\VideoMind\runtime\logs\frontend-start.out.log
 ```
 
 ## 4. 常用访问地址
@@ -106,7 +106,7 @@ C:\Users\Administrator\Documents\VideoMind\runtime\logs\frontend.log
 ```text
 前端页面：http://localhost:5173
 后端 API：http://localhost:8080
-MinIO 控制台：http://localhost:9001
+MinIO 控制台：http://localhost:9002
 RedisInsight：http://localhost:8001
 ```
 
@@ -169,7 +169,7 @@ npm run dev
 然后停止 Docker 依赖：
 
 ```powershell
-cd C:\Users\Administrator\Documents\VideoMind
+cd E:\VideoMind
 docker compose stop
 ```
 
@@ -192,7 +192,7 @@ foreach ($pidValue in $pids) {
 然后停止 Docker 依赖：
 
 ```powershell
-cd C:\Users\Administrator\Documents\VideoMind
+cd E:\VideoMind
 docker compose stop
 ```
 
@@ -220,19 +220,9 @@ Get-NetTCPConnection -LocalPort 8080,5173 -ErrorAction SilentlyContinue
 
 ## 7. 推荐启动顺序
 
-每次从零启动时，按下面顺序执行：
+每次从零启动时执行一键脚本即可：
 
 ```powershell
-cd C:\Users\Administrator\Documents\VideoMind
-docker compose up -d mysql minio rocketmq-namesrv rocketmq-broker redis-stack
-```
-
-```powershell
-cd C:\Users\Administrator\Documents\VideoMind
-powershell -ExecutionPolicy Bypass -File .\runtime\start-backend.ps1
-```
-
-```powershell
-cd C:\Users\Administrator\Documents\VideoMind\frontend\videomind-web
-npm run dev
+cd E:\VideoMind
+powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```

@@ -16,8 +16,10 @@ public class AgentCapabilitiesResponse {
     private boolean advancedMode;
     @JsonProperty("advanced_chat")
     private boolean advancedChat;
-    @JsonProperty("deep_research")
-    private boolean deepResearch;
+    @JsonProperty("web_search")
+    private boolean webSearch;
+    @JsonProperty("advanced_report")
+    private boolean advancedReport;
     @JsonProperty("ppt_generation")
     private boolean pptGeneration;
     @JsonProperty("report_export_pdf")

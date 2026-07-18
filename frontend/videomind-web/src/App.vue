@@ -14,7 +14,8 @@ const state = reactive({
     knowledge_extended: true,
     advanced_mode: true,
     advanced_chat: false,
-    deep_research: false,
+    web_search: false,
+    advanced_report: false,
     ppt_generation: false,
     report_export_pdf: false,
     report_export_docx: false,
@@ -1093,10 +1094,9 @@ function compactParagraphs(lines) {
 
     <AdvancedModeLayout
       v-show="state.appMode === 'advanced'"
+      :active="state.appMode === 'advanced'"
       :videos="state.videos"
       :selected-video="state.selectedVideo"
-      :summary-text="state.taskResult?.summaryText || ''"
-      :summary-loading="state.resultLoading"
       :capabilities="state.capabilities"
       @select-video="selectVideo"
     />

@@ -1,10 +1,11 @@
 services:
   mysql:
-    image: mysql:8.0
+    image: mysql/mysql-server:8.0
     container_name: videomind-mysql
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_HOST: "%"
       MYSQL_DATABASE: videomind
       TZ: Asia/Shanghai
     ports:
@@ -13,7 +14,7 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     volumes:
-      - mysql-data:/var/lib/mysql
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/mysql:/var/lib/mysql"
       - ./backend/videomind-server/src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
 
   minio:
@@ -29,7 +30,7 @@ services:
       - "9002:9001"
     command: server /data --console-address ":9001"
     volumes:
-      - minio-data:/data
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/minio:/data"
 
   rocketmq-namesrv:
     image: apache/rocketmq:4.9.7
@@ -42,7 +43,7 @@ services:
       JAVA_OPT_EXT: "-server -Xms256m -Xmx256m -Xmn128m"
     command: sh mqnamesrv
     volumes:
-      - rocketmq-namesrv-logs:/home/rocketmq/logs
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/rocketmq/namesrv-logs:/home/rocketmq/logs"
 
   rocketmq-broker:
     image: apache/rocketmq:4.9.7
@@ -60,23 +61,15 @@ services:
     command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/broker.conf
     volumes:
       - ./deploy/rocketmq/broker.conf:/home/rocketmq/broker.conf:ro
-      - rocketmq-broker-logs:/home/rocketmq/logs
-      - rocketmq-broker-store:/home/rocketmq/store
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/rocketmq/broker-logs:/home/rocketmq/logs"
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/rocketmq/broker-store:/home/rocketmq/store"
 
   redis-stack:
     image: redis/redis-stack:7.4.0-v8
     container_name: videomind-redis-stack
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6380}:6379"
       - "8001:8001"
     volumes:
-      - redis-stack-data:/data
-
-volumes:
-  mysql-data:
-  minio-data:
-  rocketmq-namesrv-logs:
-  rocketmq-broker-logs:
-  rocketmq-broker-store:
-  redis-stack-data:
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/redis:/data"

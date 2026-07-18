@@ -51,6 +51,9 @@ public class AgentWebhookService {
         task.setErrorCode(text(event, "errorCode"));
         task.setErrorMessage(text(event, "errorMessage", "message"));
         task.setArtifactId(textOrDefault(result, "presentationId", textOrDefault(result, "artifactId", task.getArtifactId())));
+        if ("RESEARCH".equals(task.getTaskType())) {
+            task.setReportId(textOrDefault(result, "reportId", task.getReportId()));
+        }
         task.setOutputUrl(textOrDefault(result, "downloadUrl", textOrDefault(result, "outputUrl", task.getOutputUrl())));
         task.setUpdatedAt(LocalDateTime.now());
         agentTaskMapper.updateById(task);
@@ -128,6 +131,7 @@ public class AgentWebhookService {
     private boolean isTerminal(String status) {
         return "SUCCESS".equalsIgnoreCase(status)
                 || "COMPLETED".equalsIgnoreCase(status)
-                || "FAILED".equalsIgnoreCase(status);
+                || "FAILED".equalsIgnoreCase(status)
+                || "CANCELLED".equalsIgnoreCase(status);
     }
 }

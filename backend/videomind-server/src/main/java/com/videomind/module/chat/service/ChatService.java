@@ -10,7 +10,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 public interface ChatService {
 
-    ChatSessionCreateResponse createSession(Long videoId, Long userId);
+    ChatSessionCreateResponse createSession(Long videoId, String applicationMode, Long userId);
 
     List<ChatSessionResponse> listSessions(Long videoId, Long userId);
 

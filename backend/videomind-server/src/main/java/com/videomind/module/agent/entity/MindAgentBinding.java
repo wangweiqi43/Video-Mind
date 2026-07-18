@@ -1,0 +1,2 @@
+package com.videomind.module.agent.entity;import com.baomidou.mybatisplus.annotation.*;import java.time.LocalDateTime;import lombok.Data;
+@Data@TableName("mindagent_binding")public class MindAgentBinding{@TableId(type=IdType.AUTO)private Long id;private Long userId;private String mindagentSubject;private String mindagentUsername;private String accessTokenCipher;private String refreshTokenCipher;private String scopes;private LocalDateTime accessExpiresAt;private String status;private LocalDateTime createdAt;private LocalDateTime updatedAt;}

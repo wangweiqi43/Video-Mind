@@ -16,7 +16,7 @@ spring:
   data:
     redis:
       host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      port: ${REDIS_PORT:6380}
       database: ${REDIS_DATABASE:0}
   sql:
     init:
@@ -43,6 +43,12 @@ logging:
     com.videomind: debug
 
 videomind:
+  auth:
+    jwt-secret: ${VIDEOMIND_JWT_SECRET}
+    access-minutes: ${VIDEOMIND_ACCESS_MINUTES:15}
+    refresh-days: ${VIDEOMIND_REFRESH_DAYS:30}
+    token-encryption-key: ${VIDEOMIND_TOKEN_ENCRYPTION_KEY}
+    frontend-url: ${VIDEOMIND_FRONTEND_URL:http://localhost:5173}
   minio:
     endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
     access-key: ${MINIO_ACCESS_KEY:minioadmin}
@@ -108,6 +114,8 @@ videomind:
     enabled: ${VIDEOMIND_AGENT_ENABLED:false}
     ingest-enabled: ${VIDEOMIND_AGENT_INGEST_ENABLED:false}
     chat-enabled: ${VIDEOMIND_AGENT_CHAT_ENABLED:false}
+    web-search-enabled: ${VIDEOMIND_AGENT_WEB_SEARCH_ENABLED:false}
+    advanced-report-enabled: ${VIDEOMIND_AGENT_ADVANCED_REPORT_ENABLED:${VIDEOMIND_AGENT_DEEP_RESEARCH_ENABLED:false}}
     presentation-enabled: ${VIDEOMIND_AGENT_PRESENTATION_ENABLED:false}
     fallback-on-error: ${VIDEOMIND_AGENT_FALLBACK_ON_ERROR:true}
     base-url: ${AGENT_PLATFORM_BASE_URL:http://localhost:8090}
@@ -115,6 +123,10 @@ videomind:
     api-key: ${AGENT_PLATFORM_API_KEY:}
     signing-secret: ${AGENT_PLATFORM_SIGNING_SECRET:}
     webhook-secret: ${AGENT_PLATFORM_WEBHOOK_SECRET:}
+    frontend-url: ${AGENT_PLATFORM_FRONTEND_URL:http://localhost:5174}
+    oauth-client-id: ${AGENT_PLATFORM_OAUTH_CLIENT_ID:videomind}
+    oauth-client-secret: ${AGENT_PLATFORM_OAUTH_CLIENT_SECRET}
+    oauth-redirect-uri: ${AGENT_PLATFORM_OAUTH_REDIRECT_URI:http://localhost:8080/api/integrations/mindagent/callback}
     connect-timeout-seconds: ${AGENT_PLATFORM_CONNECT_TIMEOUT_SECONDS:10}
     read-timeout-seconds: ${AGENT_PLATFORM_READ_TIMEOUT_SECONDS:180}
     max-retries: ${AGENT_PLATFORM_MAX_RETRIES:2}

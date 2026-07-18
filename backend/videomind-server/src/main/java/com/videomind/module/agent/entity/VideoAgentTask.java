@@ -22,6 +22,7 @@ public class VideoAgentTask {
     private String errorCode;
     private String errorMessage;
     private String artifactId;
+    private String reportId;
     private String outputUrl;
     private Integer version;
     private String requestJson;

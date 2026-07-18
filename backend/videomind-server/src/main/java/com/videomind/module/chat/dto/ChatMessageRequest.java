@@ -22,4 +22,6 @@ public class ChatMessageRequest {
 
     @Pattern(regexp = "NORMAL|ADVANCED", message = "必须为 NORMAL 或 ADVANCED")
     private String applicationMode = "NORMAL";
+
+    private Boolean webSearchEnabled = false;
 }

@@ -2,7 +2,8 @@ import axios from 'axios'
 
 const http = axios.create({
   baseURL: '/api',
-  timeout: 120000
+  timeout: 120000,
+  withCredentials: true
 })
 
 http.interceptors.response.use((response) => {
@@ -14,6 +15,30 @@ http.interceptors.response.use((response) => {
 })
 
 export const api = {
+  register(username, password) {
+    return http.post('/auth/register', { username, password })
+  },
+  login(username, password) {
+    return http.post('/auth/login', { username, password })
+  },
+  me() {
+    return http.get('/auth/me')
+  },
+  logout() {
+    return http.post('/auth/logout')
+  },
+  mindAgentBindingStatus() {
+    return http.get('/integrations/mindagent/status')
+  },
+  authorizeMindAgent() {
+    return http.post('/integrations/mindagent/authorize')
+  },
+  unlinkMindAgent() {
+    return http.delete('/integrations/mindagent/binding')
+  },
+  syncMindAgentVideo(videoId) {
+    return http.post(`/integrations/mindagent/videos/${videoId}/sync`)
+  },
   uploadVideo(file, onUploadProgress) {
     const form = new FormData()
     form.append('file', file)
@@ -62,17 +87,17 @@ export const api = {
   vectorStatus(taskId) {
     return http.get(`/knowledge/status/${taskId}`)
   },
-  createSession(videoId) {
-    return http.post('/chat/session', { videoId })
+  createSession(videoId, applicationMode = 'NORMAL') {
+    return http.post('/chat/session', { videoId, applicationMode })
   },
   listSessions(videoId) {
     return http.get('/chat/session/list', { params: { videoId } })
   },
-  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', applicationMode = 'NORMAL') {
-    return http.post('/chat/message', { sessionId, videoId, question, answerScope, applicationMode })
+  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', applicationMode = 'NORMAL', webSearchEnabled = false) {
+    return http.post('/chat/message', { sessionId, videoId, question, answerScope, applicationMode, webSearchEnabled })
   },
-  streamMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta) {
-    return streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta)
+  streamMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled = false) {
+    return streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled)
   },
   listMessages(sessionId, videoId) {
     return http.get(`/chat/session/${sessionId}/messages`, { params: { videoId } })
@@ -89,18 +114,25 @@ export const api = {
   retryPresentation(videoId, taskId) {
     return http.post(`/videos/${videoId}/presentations/${taskId}/retry`)
   },
+  ensureAdvancedReport(videoId) {
+    return http.post(`/videos/${videoId}/advanced-report:ensure`)
+  },
+  getAdvancedReport(videoId) {
+    return http.get(`/videos/${videoId}/advanced-report`)
+  },
   getCapabilities() {
     return http.get('/v1/system/capabilities')
   }
 }
 
-function streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta) {
+function streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled = false) {
   const params = new URLSearchParams({
     sessionId: String(sessionId),
     videoId: String(videoId),
     question,
     answerScope,
-    applicationMode
+    applicationMode,
+    webSearchEnabled: String(Boolean(webSearchEnabled))
   })
   return new Promise((resolve, reject) => {
     const source = new EventSource(`/api/chat/message/stream?${params.toString()}`)

@@ -18,16 +18,31 @@ import java.util.function.Consumer;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.RequiredArgsConstructor;
+import com.videomind.module.agent.service.MindAgentBindingService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
-@RequiredArgsConstructor
 public class AgentApiClient {
 
     private final HttpClient agentHttpClient;
     private final ObjectMapper objectMapper;
     private final AgentClientProperties properties;
+    private final MindAgentBindingService bindingService;
+
+    public AgentApiClient(HttpClient httpClient, ObjectMapper objectMapper, AgentClientProperties properties) {
+        this(httpClient, objectMapper, properties, null);
+    }
+
+    @Autowired
+    public AgentApiClient(HttpClient httpClient, ObjectMapper objectMapper, AgentClientProperties properties,
+                          MindAgentBindingService bindingService) {
+        this.agentHttpClient = httpClient;
+        this.objectMapper = objectMapper;
+        this.properties = properties;
+        this.bindingService = bindingService;
+    }
 
     public JsonNode post(String path, Object payload, AgentRequestContext context) {
         String body = serialize(payload);
@@ -37,6 +52,23 @@ public class AgentApiClient {
             return objectMapper.readTree(response.body());
         } catch (IOException ex) {
             throw new AgentClientException("INVALID_RESPONSE", "Agent Platform 返回了无法解析的 JSON", ex, false);
+        }
+    }
+
+    public JsonNode get(String path, AgentRequestContext context) {
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder(resolve(path)).timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
+                    .header("Accept", "application/json").header("X-Trace-Id", context.traceId()).GET();
+            String accessToken = bindingService == null ? properties.getApiKey() : bindingService.accessToken(context.userId());
+            if (StringUtils.hasText(accessToken)) builder.header("Authorization", "Bearer " + accessToken);
+            HttpResponse<String> response = agentHttpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            ensureSuccess(response.statusCode(), response.body());
+            return objectMapper.readTree(response.body());
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new AgentClientException("INTERRUPTED", "Agent Platform 请求被中断", ex, true);
+        } catch (IOException ex) {
+            throw new AgentClientException("NETWORK_ERROR", "Agent Platform 网络请求失败", ex, true);
         }
     }
 
@@ -90,20 +122,16 @@ public class AgentApiClient {
     }
 
     private HttpRequest buildRequest(String path, String body, AgentRequestContext context) {
-        String timestamp = String.valueOf(Instant.now().getEpochSecond());
         HttpRequest.Builder builder = HttpRequest.newBuilder(resolve(path))
                 .timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream, application/json")
-                .header("X-Tenant-Id", context.tenantId())
-                .header("X-User-Id", String.valueOf(context.userId()))
                 .header("Idempotency-Key", context.idempotencyKey())
                 .header("X-Trace-Id", context.traceId())
-                .header("X-Timestamp", timestamp)
-                .header("X-Signature", sign("POST", path, timestamp, body))
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-        if (StringUtils.hasText(properties.getApiKey())) {
-            builder.header("Authorization", "Bearer " + properties.getApiKey());
+        String accessToken = bindingService == null ? properties.getApiKey() : bindingService.accessToken(context.userId());
+        if (StringUtils.hasText(accessToken)) {
+            builder.header("Authorization", "Bearer " + accessToken);
         }
         return builder.build();
     }

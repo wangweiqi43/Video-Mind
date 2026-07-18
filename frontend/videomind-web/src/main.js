@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import './styles.css'
-import App from './App.vue'
+import Root from './Root.vue'
 
-createApp(App).use(ElementPlus).mount('#app')
+createApp(Root).use(ElementPlus).mount('#app')
 

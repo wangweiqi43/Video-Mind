@@ -17,6 +17,8 @@ public class ChatSession {
     private Long videoId;
     private String title;
     private String memorySummary;
+    private String applicationMode;
+    private String mindagentConversationId;
     private LocalDateTime createdTime;
     private LocalDateTime updatedTime;
     @TableLogic

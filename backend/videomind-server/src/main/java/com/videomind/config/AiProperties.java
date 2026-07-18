@@ -1,6 +1,7 @@
 package com.videomind.config;
 
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @Data
@@ -27,6 +28,7 @@ public class AiProperties {
     }
 
     @Data
+    @EqualsAndHashCode(callSuper = true)
     public static class EmbeddingProvider extends ApiProvider {
 
         private Integer dimension = 64;
