@@ -35,6 +35,17 @@ VideoMind 是一个本地可运行的 AI 视频内容理解平台。当前仓库
 
 ## 本地启动
 
+推荐使用项目的一键启动脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File E:\VideoMind\start.ps1
+```
+
+首次本地启动且未配置认证密钥时，脚本会在 Git 忽略的
+`runtime/local-secrets.env` 中生成并持久保存开发密钥。生产环境必须通过环境变量或未跟踪的 `.env` 提供真实密钥。
+
+也可以手动启动：
+
 ```bash
 docker compose up -d mysql minio rocketmq-namesrv rocketmq-broker redis-stack
 cd backend/videomind-server
@@ -60,6 +71,9 @@ npm run dev
 - Database: `videomind`
 - Username: `root`
 - Password: `root`
+
+数据库结构只由 Flyway 管理，迁移文件位于
+`backend/videomind-server/src/main/resources/db/migration`。已有的 pre-Flyway 数据库会以版本 7 建立 baseline，随后执行 V8 及更高版本；空数据库会从 V1 顺序迁移。
 
 MinIO 控制台：
 
@@ -191,6 +205,7 @@ curl -X POST http://localhost:8080/api/videos/multipart/<uploadId>/complete
 
 - 如果本机已有 MySQL 占用 `3306`，本项目 Docker MySQL 映射到 `3307`。
 - Docker 持久化数据默认保存在 `E:/VideoMindData`，可通过 `VIDEOMIND_DATA_ROOT` 调整。
+- 数据库名默认是 `videomind`，可通过 `MYSQL_DATABASE` 调整；MySQL 容器只负责创建数据库，禁止再挂载初始化 SQL。
 - 本机工具默认使用 `E:/Java`、`E:/Maven`、`E:/NodeJS` 和 `E:/FFmpeg`。
 - RocketMQ 使用 `apache/rocketmq:4.9.7`，本地开发下以 root 用户运行，避免 Windows Docker volume 权限导致 broker 反复重启。
 - 如果 Docker Desktop 提示 WSL integration stopped，可执行 `wsl --shutdown` 后重启 Docker Desktop；必要时重启 Docker Desktop 进程。

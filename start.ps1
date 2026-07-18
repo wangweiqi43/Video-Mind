@@ -22,8 +22,132 @@ $backendLog = Join-Path $logDir "backend-start.out.log"
 $backendErrorLog = Join-Path $logDir "backend-start.err.log"
 $frontendLog = Join-Path $logDir "frontend-start.out.log"
 $frontendErrorLog = Join-Path $logDir "frontend-start.err.log"
+$localSecretsFile = Join-Path $runtimeDir "local-secrets.env"
+$backendHealthUrl = "http://localhost:8080/api/v1/system/capabilities"
+$frontendHealthUrl = "http://localhost:5173"
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+
+function Import-EnvironmentFile {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) {
+            continue
+        }
+        $separator = $trimmed.IndexOf("=")
+        if ($separator -le 0) {
+            continue
+        }
+        $name = $trimmed.Substring(0, $separator).Trim()
+        $value = $trimmed.Substring($separator + 1).Trim()
+        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or
+            ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+}
+
+function Import-UserEnvironmentVariable {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if ([Environment]::GetEnvironmentVariable($Name, "Process")) {
+        return
+    }
+    $value = [Environment]::GetEnvironmentVariable($Name, "User")
+    if ($value) {
+        [Environment]::SetEnvironmentVariable($Name, $value, "Process")
+    }
+}
+
+function Get-EnvironmentFileValue {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+    foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        if ($line -match ('^' + [regex]::Escape($Name) + '=(.+)$')) {
+            return $Matches[1].Trim()
+        }
+    }
+    return $null
+}
+
+function Test-UsableSecret {
+    param([AllowNull()][string]$Value)
+
+    if (-not $Value -or $Value -match '^(replace-with|your_)') {
+        return $false
+    }
+    return [Text.Encoding]::UTF8.GetByteCount($Value) -ge 32
+}
+
+function New-RandomSecret {
+    $bytes = New-Object byte[] 48
+    $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($bytes)
+    } finally {
+        $generator.Dispose()
+    }
+    return [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+}
+
+function Ensure-LocalDevelopmentSecret {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    $current = [Environment]::GetEnvironmentVariable($Name, "Process")
+    if (Test-UsableSecret -Value $current) {
+        return
+    }
+    $stored = Get-EnvironmentFileValue -Path $localSecretsFile -Name $Name
+    if (Test-UsableSecret -Value $stored) {
+        [Environment]::SetEnvironmentVariable($Name, $stored, "Process")
+        return
+    }
+    $generated = New-RandomSecret
+    Add-Content -LiteralPath $localSecretsFile -Encoding UTF8 -Value "$Name=$generated"
+    [Environment]::SetEnvironmentVariable($Name, $generated, "Process")
+    Write-Warning "$Name was missing or too short. A persistent local development value was created in runtime\local-secrets.env."
+}
+
+Import-EnvironmentFile -Path (Join-Path $repoRoot ".env")
+foreach ($name in @(
+    "SILICONFLOW_API_KEY",
+    "MYSQL_HOST",
+    "MYSQL_PORT",
+    "MYSQL_DATABASE",
+    "MYSQL_USERNAME",
+    "MYSQL_PASSWORD",
+    "VIDEOMIND_JWT_SECRET",
+    "VIDEOMIND_TOKEN_ENCRYPTION_KEY",
+    "AGENT_PLATFORM_OAUTH_CLIENT_SECRET",
+    "AGENT_PLATFORM_WEBHOOK_SECRET"
+)) {
+    Import-UserEnvironmentVariable -Name $name
+}
+Ensure-LocalDevelopmentSecret -Name "VIDEOMIND_JWT_SECRET"
+Ensure-LocalDevelopmentSecret -Name "VIDEOMIND_TOKEN_ENCRYPTION_KEY"
 
 function Test-HttpEndpoint {
     param(
@@ -45,7 +169,11 @@ function Wait-ForEndpoint {
         [string]$Name,
         [Parameter(Mandatory)]
         [string]$Url,
-        [int]$TimeoutSeconds = 90
+        [int]$TimeoutSeconds = 90,
+        [System.Diagnostics.Process]$Process,
+        [string]$OutputLog,
+        [string]$ErrorLog,
+        [string]$PidFile
     )
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -53,6 +181,21 @@ function Wait-ForEndpoint {
         if (Test-HttpEndpoint -Url $Url) {
             Write-Host "[OK] $Name is ready: $Url" -ForegroundColor Green
             return
+        }
+        if ($Process -and $Process.HasExited) {
+            if ($PidFile) {
+                Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+            }
+            $details = [System.Collections.Generic.List[string]]::new()
+            foreach ($log in @($ErrorLog, $OutputLog)) {
+                if ($log -and (Test-Path -LiteralPath $log)) {
+                    $tail = (Get-Content -LiteralPath $log -Tail 35 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
+                    if ($tail) {
+                        $details.Add("--- $log ---`n$tail")
+                    }
+                }
+            }
+            throw "$Name process exited before becoming ready (exit code $($Process.ExitCode)).`n$($details -join "`n")"
         }
         Start-Sleep -Seconds 2
     } while ((Get-Date) -lt $deadline)
@@ -126,10 +269,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker dependencies failed to start."
 }
 
-$apiKey = [Environment]::GetEnvironmentVariable("SILICONFLOW_API_KEY", "User")
-if (-not $env:SILICONFLOW_API_KEY -and $apiKey) {
-    $env:SILICONFLOW_API_KEY = $apiKey
-}
 if (-not $env:SILICONFLOW_API_KEY) {
     Write-Warning "SILICONFLOW_API_KEY is not configured. Real AI requests will fail."
 }
@@ -141,7 +280,12 @@ $env:VIDEOMIND_CHAT_MODE = "real"
 $env:KNOWLEDGE_TTL_SECONDS = "2592000"
 $env:REDIS_PORT = "6380"
 
-if (Test-HttpEndpoint -Url "http://localhost:8080/api/videos/list") {
+$backendProcess = $null
+$frontendProcess = $null
+$backendPidFile = Join-Path $runtimeDir "backend.pid"
+$frontendPidFile = Join-Path $runtimeDir "frontend.pid"
+
+if (Test-HttpEndpoint -Url $backendHealthUrl) {
     Write-Host "[OK] Backend is already running." -ForegroundColor Green
 } else {
     $portOwner = Get-NetTCPConnection -State Listen -LocalPort 8080 -ErrorAction SilentlyContinue
@@ -158,8 +302,11 @@ if (Test-HttpEndpoint -Url "http://localhost:8080/api/videos/list") {
         -RedirectStandardError $backendErrorLog `
         -WindowStyle Hidden `
         -PassThru
-    Set-Content -LiteralPath (Join-Path $runtimeDir "backend.pid") -Value $backendProcess.Id
+    Set-Content -LiteralPath $backendPidFile -Value $backendProcess.Id
 }
+
+Wait-ForEndpoint -Name "Backend" -Url $backendHealthUrl -TimeoutSeconds 120 `
+    -Process $backendProcess -OutputLog $backendLog -ErrorLog $backendErrorLog -PidFile $backendPidFile
 
 if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules"))) {
     Write-Host "[..] Installing frontend dependencies..."
@@ -169,7 +316,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $frontendDir "node_modules"))) {
     }
 }
 
-if (Test-HttpEndpoint -Url "http://localhost:5173") {
+if (Test-HttpEndpoint -Url $frontendHealthUrl) {
     Write-Host "[OK] Frontend is already running." -ForegroundColor Green
 } else {
     $portOwner = Get-NetTCPConnection -State Listen -LocalPort 5173 -ErrorAction SilentlyContinue
@@ -186,11 +333,11 @@ if (Test-HttpEndpoint -Url "http://localhost:5173") {
         -RedirectStandardError $frontendErrorLog `
         -WindowStyle Hidden `
         -PassThru
-    Set-Content -LiteralPath (Join-Path $runtimeDir "frontend.pid") -Value $frontendProcess.Id
+    Set-Content -LiteralPath $frontendPidFile -Value $frontendProcess.Id
 }
 
-Wait-ForEndpoint -Name "Backend" -Url "http://localhost:8080/api/videos/list" -TimeoutSeconds 120
-Wait-ForEndpoint -Name "Frontend" -Url "http://localhost:5173" -TimeoutSeconds 60
+Wait-ForEndpoint -Name "Frontend" -Url $frontendHealthUrl -TimeoutSeconds 60 `
+    -Process $frontendProcess -OutputLog $frontendLog -ErrorLog $frontendErrorLog -PidFile $frontendPidFile
 
 Write-Host ""
 Write-Host "VideoMind is running." -ForegroundColor Cyan

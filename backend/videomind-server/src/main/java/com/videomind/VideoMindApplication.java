@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
         "com.videomind.module.video.mapper",
         "com.videomind.module.task.mapper",
         "com.videomind.module.chat.mapper",
+        "com.videomind.module.auth.mapper",
         "com.videomind.module.agent.mapper"
 })
 @SpringBootApplication

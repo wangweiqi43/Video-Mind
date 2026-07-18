@@ -16,7 +16,7 @@ powershell -ExecutionPolicy Bypass -File E:\VideoMind\start.ps1
 powershell -ExecutionPolicy Bypass -File E:\VideoMind\start.ps1 -OpenBrowser
 ```
 
-该脚本会自动启动 Docker Desktop（如有需要）、Docker 依赖、后端和前端。重复执行不会重复启动已经运行的服务。
+该脚本会自动启动 Docker Desktop（如有需要）、Docker 依赖、后端和前端。重复执行不会重复启动已经运行的服务。未配置本地认证密钥时，脚本会在 Git 忽略的 `runtime/local-secrets.env` 中生成稳定的开发密钥；后续启动会继续复用。
 
 一键停止前端、后端和 Docker 依赖：
 
@@ -71,7 +71,7 @@ http://localhost:8080
 可用下面命令验证后端是否启动成功：
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing http://localhost:8080/api/videos/list
+Invoke-WebRequest -UseBasicParsing http://localhost:8080/api/v1/system/capabilities
 ```
 
 后端日志位置：
@@ -127,9 +127,24 @@ Username: root
 Password: root
 ```
 
+可通过未跟踪的 `.env` 或环境变量覆盖 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USERNAME` 和 `MYSQL_PASSWORD`。
+
+### 4.1 数据库迁移
+
+数据库 DDL 只由 Flyway 管理，迁移目录为：
+
+```text
+E:\VideoMind\backend\videomind-server\src\main\resources\db\migration
+```
+
+- 全新空数据库从 V1 开始顺序迁移。
+- 没有 Flyway 历史表的既有 VideoMind 数据库按版本 7 建立 baseline，再执行 V8 及后续迁移。
+- 不再使用 `schema.sql`、Docker 初始化 SQL 或 Java `ApplicationRunner` 修改表结构。
+- 新表、字段和索引必须新增版本化迁移，禁止直接修改已经发布并执行过的迁移文件。
+
 ## 5. 真实大模型配置
 
-当前后端启动脚本 `runtime/start-backend.ps1` 已切到真实 AI 模式：
+当前一键启动脚本 `start.ps1` 默认切到真实 AI 模式：
 
 ```powershell
 $env:VIDEOMIND_ASR_MODE = "real"
@@ -147,7 +162,7 @@ SUMMARY_API_KEY
 ASR_API_KEY
 ```
 
-如果只是想本地跑通流程，不调用真实 API，可以把 `runtime/start-backend.ps1` 中对应模式改成 `mock` 后重启后端。
+如果只是想本地跑通流程，不调用真实 API，可在未跟踪的 `.env` 中把对应模式设置为 `mock` 后重启后端。
 
 ## 6. 停止项目
 
