@@ -153,16 +153,26 @@ set CHAT_MODEL=deepseek-ai/DeepSeek-V4-Flash
 
 当前真实客户端默认兼容常见的 Bearer Token、OpenAI-like `messages`、`choices[0].message.content` 和 `data[0].embedding` 响应格式。如果你提供的 API 字段不同，只需要修改对应 real client 的 `buildRequest` 或 `parseResponse/parseContent/parseVector` 方法。
 
-Agent Platform 尚未部署时保持相关开关为 `false`。独立 Agent 项目就绪后，至少配置：
+MindAgent 尚未启动时保持相关开关为 `false`。启用正式对接时使用 OAuth 2.0 Authorization Code + PKCE S256，至少配置：
 
-```bash
-set VIDEOMIND_AGENT_ENABLED=true
-set VIDEOMIND_AGENT_CHAT_ENABLED=true
-set VIDEOMIND_AGENT_WEB_SEARCH_ENABLED=true
-set AGENT_PLATFORM_BASE_URL=http://localhost:8090
-set AGENT_PLATFORM_API_KEY=your_agent_api_key
-set AGENT_PLATFORM_SIGNING_SECRET=your_signing_secret
+```dotenv
+VIDEOMIND_AGENT_ENABLED=true
+VIDEOMIND_AGENT_INGEST_ENABLED=false
+VIDEOMIND_AGENT_CHAT_ENABLED=false
+VIDEOMIND_AGENT_WEB_SEARCH_ENABLED=false
+VIDEOMIND_AGENT_ADVANCED_REPORT_ENABLED=false
+VIDEOMIND_AGENT_PRESENTATION_ENABLED=false
+AGENT_PLATFORM_BASE_URL=http://localhost:8090
+AGENT_PLATFORM_FRONTEND_URL=http://localhost:5174
+AGENT_PLATFORM_OAUTH_CLIENT_ID=videomind
+AGENT_PLATFORM_OAUTH_CLIENT_SECRET=<与 MindAgent 的 VIDEOMIND_CLIENT_SECRET 一致>
+AGENT_PLATFORM_OAUTH_REDIRECT_URI=http://localhost:8080/api/integrations/mindagent/callback
+AGENT_PLATFORM_WEBHOOK_SECRET=<与 MindAgent 的 VIDEOMIND_WEBHOOK_SECRET 一致>
 ```
+
+这些值可写入被 Git 忽略的项目根目录 `.env`，`start.ps1` 会自动加载。Agent 主开关开启时，后端会校验 URL、OAuth 和 Webhook 必填配置；任一子能力开启时主开关必须开启，联网搜索还要求高级聊天同时开启。
+
+OAuth access/refresh token 仅以加密形式保存在 `mindagent_binding`。access token 将在到期前刷新；MindAgent 轮换 refresh token 后会立即替换本地密文。上游因无效或过期 Bearer JWT 返回 401/403 时只强制刷新并重放一次。刷新令牌永久失效时绑定进入 `REAUTH_REQUIRED`，用户可在右上角重新绑定。`AGENT_PLATFORM_API_KEY` 和 `AGENT_PLATFORM_SIGNING_SECRET` 只保留给旧兼容客户端，不是正式对接的鉴权方式。
 
 其中 `VIDEOMIND_AGENT_WEB_SEARCH_ENABLED` 只控制能力是否对前端开放；真正是否搜索由每次高级聊天请求的 `webSearchEnabled` 决定，并以 `toolPolicy.webSearch` 传给 Agent。
 

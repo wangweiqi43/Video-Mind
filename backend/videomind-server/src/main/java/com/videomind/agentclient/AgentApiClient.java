@@ -17,8 +17,7 @@ import java.util.HexFormat;
 import java.util.function.Consumer;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import lombok.RequiredArgsConstructor;
-import com.videomind.module.agent.service.MindAgentBindingService;
+import com.videomind.module.agent.service.MindAgentOAuthService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -29,7 +28,7 @@ public class AgentApiClient {
     private final HttpClient agentHttpClient;
     private final ObjectMapper objectMapper;
     private final AgentClientProperties properties;
-    private final MindAgentBindingService bindingService;
+    private final MindAgentOAuthService bindingService;
 
     public AgentApiClient(HttpClient httpClient, ObjectMapper objectMapper, AgentClientProperties properties) {
         this(httpClient, objectMapper, properties, null);
@@ -37,7 +36,7 @@ public class AgentApiClient {
 
     @Autowired
     public AgentApiClient(HttpClient httpClient, ObjectMapper objectMapper, AgentClientProperties properties,
-                          MindAgentBindingService bindingService) {
+                          MindAgentOAuthService bindingService) {
         this.agentHttpClient = httpClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
@@ -46,7 +45,7 @@ public class AgentApiClient {
 
     public JsonNode post(String path, Object payload, AgentRequestContext context) {
         String body = serialize(payload);
-        HttpResponse<String> response = sendWithRetry(path, body, context, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = sendWithRetry("POST", path, body, context, HttpResponse.BodyHandlers.ofString());
         ensureSuccess(response.statusCode(), response.body());
         try {
             return objectMapper.readTree(response.body());
@@ -57,24 +56,19 @@ public class AgentApiClient {
 
     public JsonNode get(String path, AgentRequestContext context) {
         try {
-            HttpRequest.Builder builder = HttpRequest.newBuilder(resolve(path)).timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
-                    .header("Accept", "application/json").header("X-Trace-Id", context.traceId()).GET();
-            String accessToken = bindingService == null ? properties.getApiKey() : bindingService.accessToken(context.userId());
-            if (StringUtils.hasText(accessToken)) builder.header("Authorization", "Bearer " + accessToken);
-            HttpResponse<String> response = agentHttpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = sendWithRetry(
+                    "GET", path, null, context, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             ensureSuccess(response.statusCode(), response.body());
             return objectMapper.readTree(response.body());
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new AgentClientException("INTERRUPTED", "Agent Platform 请求被中断", ex, true);
         } catch (IOException ex) {
-            throw new AgentClientException("NETWORK_ERROR", "Agent Platform 网络请求失败", ex, true);
+            throw new AgentClientException("INVALID_RESPONSE", "Agent Platform 返回了无法解析的 JSON", ex, false);
         }
     }
 
     public void postSse(String path, Object payload, AgentRequestContext context, Consumer<AgentSseEvent> consumer) {
         String body = serialize(payload);
-        HttpResponse<InputStream> response = sendWithRetry(path, body, context, HttpResponse.BodyHandlers.ofInputStream());
+        HttpResponse<InputStream> response = sendWithRetry(
+                "POST", path, body, context, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             try (InputStream input = response.body()) {
                 ensureSuccess(response.statusCode(), new String(input.readAllBytes(), StandardCharsets.UTF_8));
@@ -94,46 +88,72 @@ public class AgentApiClient {
     }
 
     private <T> HttpResponse<T> sendWithRetry(
+            String method,
             String path,
             String body,
             AgentRequestContext context,
             HttpResponse.BodyHandler<T> bodyHandler
     ) {
-        int attempts = Math.max(1, properties.getMaxRetries() + 1);
-        for (int attempt = 1; attempt <= attempts; attempt++) {
+        int maxTransientAttempts = Math.max(1, properties.getMaxRetries() + 1);
+        int transientAttempt = 1;
+        boolean authorizationReplayed = false;
+        while (transientAttempt <= maxTransientAttempts) {
+            String accessToken = resolveAccessToken(context.userId());
             try {
-                HttpResponse<T> response = agentHttpClient.send(buildRequest(path, body, context), bodyHandler);
-                if (!isRetryable(response.statusCode()) || attempt == attempts) {
+                HttpResponse<T> response = agentHttpClient.send(
+                        buildRequest(method, path, body, context, accessToken), bodyHandler);
+                if (isAuthenticationRejected(response.statusCode()) && bindingService != null && !authorizationReplayed) {
+                    closeQuietly(response.body());
+                    bindingService.refreshAfterUnauthorized(context.userId(), accessToken);
+                    authorizationReplayed = true;
+                    continue;
+                }
+                if (!isRetryable(response.statusCode()) || transientAttempt == maxTransientAttempts) {
                     return response;
                 }
                 closeQuietly(response.body());
-                backoff(attempt);
+                backoff(transientAttempt);
+                transientAttempt++;
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
                 throw new AgentClientException("INTERRUPTED", "Agent Platform 请求被中断", ex, true);
             } catch (IOException ex) {
-                if (attempt == attempts) {
-                    throw new AgentClientException("NETWORK_ERROR", "Agent Platform 网络请求失败：" + ex.getMessage(), ex, true);
+                if (transientAttempt == maxTransientAttempts) {
+                    throw new AgentClientException("NETWORK_ERROR", "Agent Platform 网络请求失败", ex, true);
                 }
-                backoff(attempt);
+                backoff(transientAttempt);
+                transientAttempt++;
             }
         }
         throw new AgentClientException("REQUEST_FAILED", 500, "Agent Platform 请求失败", true);
     }
 
-    private HttpRequest buildRequest(String path, String body, AgentRequestContext context) {
+    private HttpRequest buildRequest(
+            String method,
+            String path,
+            String body,
+            AgentRequestContext context,
+            String accessToken
+    ) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(resolve(path))
                 .timeout(Duration.ofSeconds(properties.getReadTimeoutSeconds()))
-                .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream, application/json")
-                .header("Idempotency-Key", context.idempotencyKey())
-                .header("X-Trace-Id", context.traceId())
-                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-        String accessToken = bindingService == null ? properties.getApiKey() : bindingService.accessToken(context.userId());
+                .header("X-Trace-Id", context.traceId());
+        if ("GET".equals(method)) {
+            builder.GET();
+        } else {
+            builder.header("Content-Type", "application/json")
+                    .header("Idempotency-Key", context.idempotencyKey())
+                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+        }
         if (StringUtils.hasText(accessToken)) {
             builder.header("Authorization", "Bearer " + accessToken);
         }
         return builder.build();
+    }
+
+    private String resolveAccessToken(Long userId) {
+        return bindingService == null ? properties.getApiKey() : bindingService.accessToken(userId);
     }
 
     private URI resolve(String path) {
@@ -192,15 +212,18 @@ public class AgentApiClient {
             code = error.path("errorCode").asText(error.path("code").asText(code));
             message = error.path("message").asText(message);
         } catch (Exception ignored) {
-            if (StringUtils.hasText(body)) {
-                message += "：" + body.substring(0, Math.min(body.length(), 300));
-            }
+            // Do not expose an unstructured upstream body to callers or logs.
         }
         throw new AgentClientException(code, status, message, isRetryable(status));
     }
 
     private boolean isRetryable(int status) {
         return status == 408 || status == 429 || status >= 500;
+    }
+
+    private boolean isAuthenticationRejected(int status) {
+        // MindAgent's Spring Security filter currently returns 403 for an invalid/expired bearer JWT.
+        return status == 401 || status == 403;
     }
 
     private void backoff(int attempt) {
