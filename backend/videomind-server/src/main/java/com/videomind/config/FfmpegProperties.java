@@ -9,6 +9,7 @@ public class FfmpegProperties {
 
     private String mode = "ffmpeg";
     private String binaryPath = "ffmpeg";
+    private String probeBinaryPath = "ffprobe";
     private String workDir = "runtime/ffmpeg";
 }
 

@@ -75,14 +75,14 @@ export const api = {
   completeMultipartUpload(uploadId) {
     return http.post(`/videos/multipart/${uploadId}/complete`)
   },
-  analyze(videoId, autoVectorize) {
-    return http.post('/tasks/analyze', { videoId, autoVectorize })
+  analyze(videoId, autoVectorize, applicationMode = 'NORMAL') {
+    return http.post('/tasks/analyze', { videoId, autoVectorize, applicationMode })
   },
   getTask(taskId) {
     return http.get(`/tasks/${taskId}`)
   },
-  getLatestSuccessfulTask(videoId) {
-    return http.get(`/tasks/video/${videoId}/latest-success`)
+  getLatestSuccessfulTask(videoId, applicationMode = 'NORMAL') {
+    return http.get(`/tasks/video/${videoId}/latest-success`, { params: { applicationMode } })
   },
   getTaskResult(taskId) {
     return http.get(`/tasks/${taskId}/result`)

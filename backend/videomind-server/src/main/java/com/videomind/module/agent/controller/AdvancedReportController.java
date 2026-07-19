@@ -40,7 +40,7 @@ public class AdvancedReportController {
         }
         return ResponseEntity.ok()
                 .contentType(new MediaType("text", "markdown", StandardCharsets.UTF_8))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=advanced-research-report.md")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=advanced-summary.md")
                 .body(report.getReportMarkdown().getBytes(StandardCharsets.UTF_8));
     }
 }

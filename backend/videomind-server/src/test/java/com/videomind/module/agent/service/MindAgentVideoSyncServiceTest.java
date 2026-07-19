@@ -18,7 +18,6 @@ import com.videomind.module.agent.dto.AgentVideoSyncResponse;
 import com.videomind.module.agent.entity.VideoAgentTask;
 import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
 import com.videomind.module.task.mapper.VideoTranscriptionMapper;
-import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
 import org.junit.jupiter.api.Test;
@@ -35,7 +34,7 @@ class MindAgentVideoSyncServiceTest {
     private final RedissonClient redisson = mock(RedissonClient.class);
     private final AgentTaskStateService states = mock(AgentTaskStateService.class);
     private final MindAgentVideoSyncService service = new MindAgentVideoSyncService(
-            videos, mock(TaskRecordService.class), mock(VideoTranscriptionMapper.class),
+            videos, mock(VideoTranscriptionMapper.class),
             mock(ObjectStorageService.class), client, properties,
             agentTasks, new ObjectMapper(), redisson, states);
 

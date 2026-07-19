@@ -73,6 +73,7 @@ videomind:
   ffmpeg:
     mode: ${VIDEOMIND_FFMPEG_MODE:ffmpeg}
     binary-path: ${FFMPEG_BINARY_PATH:ffmpeg}
+    probe-binary-path: ${FFPROBE_BINARY_PATH:ffprobe}
     work-dir: ${FFMPEG_WORK_DIR:runtime/ffmpeg}
   knowledge:
     index-name: ${KNOWLEDGE_INDEX_NAME:idx:videomind_knowledge}

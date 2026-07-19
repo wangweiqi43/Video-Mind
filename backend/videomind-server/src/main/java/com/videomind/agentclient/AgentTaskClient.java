@@ -63,6 +63,13 @@ public class AgentTaskClient {
     public AgentTaskResult createResearch(Long videoId, String knowledgeBaseId, String question,
                                           boolean webSearch, int targetLength, int transcriptVersion,String sourceTitle,Long userId,
                                           String idempotencyKey, String traceId) {
+        return createResearch(videoId, knowledgeBaseId, question, webSearch, targetLength, transcriptVersion,
+                sourceTitle, userId, idempotencyKey, traceId, null);
+    }
+
+    public AgentTaskResult createResearch(Long videoId, String knowledgeBaseId, String question,
+                                          boolean webSearch, int targetLength, int transcriptVersion,String sourceTitle,Long userId,
+                                          String idempotencyKey, String traceId, String outputProfile) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("question", question);
         payload.put("knowledgeBaseIds", java.util.List.of(knowledgeBaseId));
@@ -73,6 +80,7 @@ public class AgentTaskClient {
         payload.put("sourceVersion", transcriptVersion);
         payload.put("sourceTitle", sourceTitle);
         payload.put("publishReportKnowledgeBase", true);
+        if (StringUtils.hasText(outputProfile)) payload.put("outputProfile", outputProfile);
         JsonNode response = apiClient.post("/v1/research", payload,
                 AgentRequestContext.of(properties.getTenantId(), userId, idempotencyKey, traceId));
         return taskResult(response);

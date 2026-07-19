@@ -16,6 +16,7 @@ import com.videomind.module.task.mapper.AiSummaryResultMapper;
 import com.videomind.module.task.mapper.VideoTranscriptionMapper;
 import com.videomind.module.task.mq.VideoAnalyzeMessage;
 import com.videomind.module.knowledge.service.KnowledgeService;
+import com.videomind.module.agent.service.MindAgentVideoSyncService;
 import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.task.service.VideoAnalyzeProcessorService;
 import com.videomind.module.video.entity.VideoFile;
@@ -47,6 +48,7 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
     private final VideoTranscriptionMapper videoTranscriptionMapper;
     private final AiSummaryResultMapper aiSummaryResultMapper;
     private final KnowledgeService knowledgeService;
+    private final MindAgentVideoSyncService mindAgentVideoSyncService;
     private final RedissonClient redissonClient;
 
     @Override
@@ -57,14 +59,7 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
                     currentTask.getId(), currentTask.getTaskStatus());
             return;
         }
-        TaskRecord reusableTask = taskRecordService.getLatestSuccessfulTaskByVideo(message.getVideoId(), message.getUserId());
-        if (reusableTask != null && !reusableTask.getId().equals(message.getTaskId())) {
-            taskRecordService.markFailed(message.getTaskId(), message.getUserId(), "已有成功解析结果，跳过重复任务");
-            log.info("Skip duplicate video analyze task because reusable result exists, taskId={}, reusableTaskId={}",
-                    message.getTaskId(), reusableTask.getId());
-            return;
-        }
-
+        String mode = normalizeMode(message.getAnalysisMode());
         RLock lock = redissonClient.getLock("lock:analyze:md5:" + message.getVideoMd5());
         boolean locked = false;
         try {
@@ -81,12 +76,37 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
             }
 
             VideoFile videoFile = videoFileService.getVideoDetail(message.getVideoId(), message.getUserId());
-            AudioExtractionResult audio = audioExtractorClient.extract(videoFile, taskRecord);
-            AsrResult asrResult = speechToTextClient.transcribe(audio, videoFile, taskRecord);
-            SavedTranscription savedTranscription = saveTranscription(taskRecord, asrResult);
+            VideoTranscription reusableTranscript = latestTranscription(videoFile.getId(), message.getUserId());
+            AsrResult asrResult;
+            SavedTranscription savedTranscription;
+            if (reusableTranscript != null && videoFile.getTranscriptVersion() != null
+                    && videoFile.getTranscriptVersion() > 0) {
+                asrResult = AsrResult.builder()
+                        .text(reusableTranscript.getTranscriptionText())
+                        .language(reusableTranscript.getLanguage())
+                        .build();
+                savedTranscription = new SavedTranscription(reusableTranscript, false);
+                log.info("Reuse existing transcription, taskId={}, videoId={}, mode={}",
+                        taskRecord.getId(), videoFile.getId(), mode);
+            } else {
+                AudioExtractionResult audio = audioExtractorClient.extract(videoFile, taskRecord);
+                if (audio.getDurationSeconds() != null && audio.getDurationSeconds() > 0) {
+                    videoFile.setDurationSeconds(audio.getDurationSeconds());
+                    videoFileService.updateById(videoFile);
+                }
+                asrResult = speechToTextClient.transcribe(audio, videoFile, taskRecord);
+                savedTranscription = saveTranscription(taskRecord, asrResult);
+            }
             int transcriptVersion = updateTranscriptVersion(videoFile, savedTranscription.created());
+            if ("ADVANCED".equals(mode)) {
+                mindAgentVideoSyncService.sync(videoFile.getId(), message.getUserId(), taskRecord.getId());
+                log.info("Advanced analysis dispatched to Agent Platform, taskId={}, transcriptVersion={}",
+                        taskRecord.getId(), transcriptVersion);
+                return;
+            }
             runLegacyPostAsr(videoFile, taskRecord, asrResult);
             taskRecordService.markSuccess(message.getTaskId(), message.getUserId());
+            runAutoVectorization(taskRecord);
             log.info("Video analyze task completed, taskId={}", message.getTaskId());
         } catch (Exception ex) {
             if (ex instanceof InterruptedException) {
@@ -180,15 +200,29 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
         return new SavedTranscription(transcription, true);
     }
 
+    private VideoTranscription latestTranscription(Long videoId, Long userId) {
+        return videoTranscriptionMapper.selectOne(new LambdaQueryWrapper<VideoTranscription>()
+                .eq(VideoTranscription::getVideoId, videoId)
+                .eq(VideoTranscription::getUserId, userId)
+                .orderByDesc(VideoTranscription::getUpdatedTime)
+                .last("LIMIT 1"));
+    }
+
     private int updateTranscriptVersion(VideoFile videoFile, boolean isNewTranscription) {
         int current = videoFile.getTranscriptVersion() == null ? 0 : videoFile.getTranscriptVersion();
         int version = isNewTranscription ? current + 1 : Math.max(1, current);
         videoFile.setTranscriptVersion(version);
         if (isNewTranscription) {
+            videoFile.setSummaryStatus("UNSYNCED");
+            videoFile.setSummaryVersion(0);
+            videoFile.setLatestSummaryId(null);
             videoFile.setAgentIngestVersion(0);
             videoFile.setAgentIngestStatus("UNSYNCED");
             videoFile.setAgentSourceKnowledgeBaseId(null);
             videoFile.setAgentReportKnowledgeBaseId(null);
+            videoFile.setAgentReportStatus("UNSYNCED");
+            videoFile.setAgentReportVersion(0);
+            videoFile.setAgentReportProfile(null);
             videoFile.setAgentLastError(null);
         }
         videoFile.setAgentUpdatedAt(LocalDateTime.now());
@@ -196,13 +230,20 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
         return version;
     }
 
+    private String normalizeMode(String mode) {
+        return "ADVANCED".equalsIgnoreCase(mode) ? "ADVANCED" : "NORMAL";
+    }
+
     private void runLegacyPostAsr(VideoFile videoFile, TaskRecord taskRecord, AsrResult asrResult) {
         SummaryResult summaryResult = videoSummaryClient.summarize(asrResult, videoFile, taskRecord);
         saveSummary(taskRecord, summaryResult);
         videoFile.setSummaryStatus("SUCCESS");
-        videoFile.setSummaryVersion((videoFile.getSummaryVersion() == null ? 0 : videoFile.getSummaryVersion()) + 1);
+        videoFile.setSummaryVersion(videoFile.getTranscriptVersion());
         videoFile.setAgentUpdatedAt(LocalDateTime.now());
         videoFileService.updateById(videoFile);
+    }
+
+    private void runAutoVectorization(TaskRecord taskRecord) {
         if (Boolean.TRUE.equals(taskRecord.getAutoVectorize())) {
             try {
                 knowledgeService.vectorizeTask(taskRecord.getId(), taskRecord.getUserId());

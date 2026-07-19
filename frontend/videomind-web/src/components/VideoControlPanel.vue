@@ -9,7 +9,8 @@ const props = defineProps({
   taskLoading: { type: Boolean, default: false },
   task: { type: Object, default: null },
   vectorStatus: { type: Object, default: null },
-  autoVectorize: { type: Boolean, default: true }
+  autoVectorize: { type: Boolean, default: true },
+  applicationMode: { type: String, default: 'NORMAL' }
 })
 
 const emit = defineEmits([
@@ -22,6 +23,7 @@ const emit = defineEmits([
 
 const selectedVideoTitle = computed(() => props.selectedVideo?.originalFilename || '尚未选择视频')
 const autoVectorizeLabel = computed(() => props.autoVectorize ? '解析后入库' : '仅解析')
+const advanced = computed(() => props.applicationMode.toUpperCase() === 'ADVANCED')
 </script>
 
 <template>
@@ -44,7 +46,7 @@ const autoVectorizeLabel = computed(() => props.autoVectorize ? '解析后入库
         :loading="taskLoading"
         @click="emit('analyze')"
       >
-        AI 视频总结
+        {{ advanced ? '生成高级摘要总结' : 'AI 摘要总结' }}
       </el-button>
       <el-button
         class="ghost-button"
@@ -54,7 +56,7 @@ const autoVectorizeLabel = computed(() => props.autoVectorize ? '解析后入库
       >
         播放视频
       </el-button>
-      <div class="knowledge-tools">
+      <div v-if="!advanced" class="knowledge-tools">
         <div class="control-knowledge">
           <span class="control-label">知识库</span>
           <div class="knowledge-inline">

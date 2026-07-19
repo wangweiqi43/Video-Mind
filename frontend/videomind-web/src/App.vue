@@ -87,12 +87,20 @@ function readInitialMode() {
   return localStorage.getItem('videomind:application-mode') === 'advanced' ? 'advanced' : 'normal'
 }
 
-function switchMode(mode) {
+async function switchMode(mode) {
   state.appMode = mode
   localStorage.setItem('videomind:application-mode', mode)
   const url = new URL(window.location.href)
   url.searchParams.set('mode', mode)
   window.history.replaceState({}, '', url)
+  activePollTaskId.value = null
+  state.task = null
+  state.taskResult = null
+  state.vectorStatus = null
+  if (mode === 'normal' && state.selectedVideo?.id) {
+    state.resultLoading = true
+    try { await loadLatestTaskForVideo(state.selectedVideo.id) } finally { state.resultLoading = false }
+  }
 }
 
 async function loadCapabilities() {
@@ -134,7 +142,14 @@ async function selectVideo(video) {
   state.chatView = 'chat'
   state.sessionListError = ''
   state.resultLoading = true
-  await Promise.all([loadLatestTaskForVideo(video.id), loadSessions(video.id)])
+  const tasks = [loadSessions(video.id)]
+  if (state.appMode === 'normal') tasks.push(loadLatestTaskForVideo(video.id))
+  else {
+    state.task = null
+    state.taskResult = null
+    state.vectorStatus = null
+  }
+  await Promise.all(tasks)
   if (state.selectedVideo?.id === video.id) {
     await openVideoSession(video.id)
   }
@@ -143,7 +158,7 @@ async function selectVideo(video) {
 
 async function loadLatestTaskForVideo(videoId) {
   try {
-    const task = await api.getLatestSuccessfulTask(videoId)
+    const task = await api.getLatestSuccessfulTask(videoId, 'NORMAL')
     if (!task) {
       state.task = null
       state.taskResult = null
@@ -285,10 +300,11 @@ async function createAnalyzeTask() {
   state.taskLoading = true
   state.resultLoading = true
   try {
-    const task = await api.analyze(state.selectedVideo.id, state.autoVectorize)
-    state.task = { id: task.taskId, taskStatus: task.status, reused: task.reused }
+    const mode = state.appMode === 'advanced' ? 'ADVANCED' : 'NORMAL'
+    const task = await api.analyze(state.selectedVideo.id, mode === 'NORMAL' && state.autoVectorize, mode)
+    state.task = { id: task.taskId, taskStatus: task.status, reused: task.reused, analysisMode: mode }
     if (task.status === 'SUCCESS') {
-      await refreshTaskOutcome(task.taskId)
+      await refreshTaskOutcome(task.taskId, mode)
       return
     }
     state.taskResult = null
@@ -323,7 +339,7 @@ async function pollTask(taskId) {
     const task = await api.getTask(taskId)
     state.task = task
     if (task.taskStatus === 'SUCCESS') {
-      await refreshTaskOutcome(taskId)
+      await refreshTaskOutcome(taskId, task.analysisMode || state.task?.analysisMode || 'NORMAL')
       activePollTaskId.value = null
       return
     }
@@ -344,7 +360,13 @@ async function pollTask(taskId) {
   }
 }
 
-async function refreshTaskOutcome(taskId) {
+async function refreshTaskOutcome(taskId, mode = state.task?.analysisMode || 'NORMAL') {
+  if (String(mode).toUpperCase() === 'ADVANCED') {
+    state.taskResult = null
+    state.vectorStatus = null
+    await refreshSelectedVideoMetadata()
+    return
+  }
   await Promise.all([loadTaskResult(taskId), loadVectorStatus(taskId), refreshSelectedVideoMetadata()])
 }
 
@@ -851,6 +873,7 @@ function compactParagraphs(lines) {
           :task="state.task"
           :vector-status="state.vectorStatus"
           :auto-vectorize="state.autoVectorize"
+          application-mode="NORMAL"
           @upload="handleUpload"
           @analyze="createAnalyzeTask"
           @play="playCurrentVideo"
@@ -1066,6 +1089,7 @@ function compactParagraphs(lines) {
       :videos="state.videos"
       :selected-video="state.selectedVideo"
       :capabilities="state.capabilities"
+      :analysis-running="state.task?.analysisMode === 'ADVANCED' && !['SUCCESS', 'FAILED'].includes(state.task?.taskStatus)"
       @select-video="selectVideo"
     >
       <template #toolbar>
@@ -1078,6 +1102,7 @@ function compactParagraphs(lines) {
           :task="state.task"
           :vector-status="state.vectorStatus"
           :auto-vectorize="state.autoVectorize"
+          application-mode="ADVANCED"
           @upload="handleUpload"
           @analyze="createAnalyzeTask"
           @play="playCurrentVideo"

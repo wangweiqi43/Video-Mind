@@ -8,6 +8,7 @@ const props = defineProps({
   videos: { type: Array, default: () => [] },
   selectedVideo: { type: Object, default: null },
   active: { type: Boolean, default: false },
+  analysisRunning: { type: Boolean, default: false },
   capabilities: { type: Object, default: () => ({}) }
 })
 
@@ -42,24 +43,24 @@ const videoKey = computed(() => props.selectedVideo?.id ? `videomind:advanced:dr
 const reportHtml = computed(() => markdown.render(report.value?.reportMarkdown || ''))
 const reportStatusText = computed(() => {
   if (!props.selectedVideo?.id) return '请先选择一个已完成转录的视频。'
-  if (!props.capabilities.advanced_report) return '高级研究报告功能尚未启用。'
+  if (!props.capabilities.advanced_report) return '高级摘要总结功能尚未启用。'
   if (reportError.value) return reportError.value
-  if (reportLoading.value && !report.value) return '正在准备视频深度研究任务…'
+  if (reportLoading.value && !report.value) return '正在读取高级摘要总结状态…'
   const status = String(report.value?.status || '').toUpperCase()
   if (status === 'SYNCING' || status === 'READY') return '正在清洗并建立隐藏的转录研究素材…'
-  if (status === 'NOT_STARTED') return '正在创建研究任务…'
+  if (status === 'NOT_STARTED') return '尚未生成高级摘要总结，请点击上方“生成高级摘要总结”。'
   if (['PENDING', 'RUNNING', 'PROCESSING'].includes(status)) {
     const stage = report.value?.stage ? ` · ${report.value.stage}` : ''
-    return `研究报告生成并入库中${report.value?.progress != null ? `（${report.value.progress}%）` : ''}${stage}…`
+    return `高级摘要总结生成并入库中${report.value?.progress != null ? `（${report.value.progress}%）` : ''}${stage}…`
   }
-  if (['FAILED', 'CANCELLED'].includes(status)) return report.value?.errorMessage || '研究报告生成失败，可重新尝试。'
-  return '正在准备研究报告…'
+  if (['FAILED', 'CANCELLED'].includes(status)) return report.value?.errorMessage || '高级摘要总结生成失败，可重新尝试。'
+  return '尚未生成高级摘要总结。'
 })
 const ingestStatus = computed(() => String(ingest.value?.status || 'UNSYNCED').toUpperCase())
 const ingestStatusText = computed(() => {
   if (!props.selectedVideo?.id) return '请选择视频后同步转录。'
   if (!props.capabilities.agent_ingest) return 'Agent Platform 已接入，转录同步能力当前关闭。'
-  if (!(Number(props.selectedVideo?.transcriptVersion) > 0)) return '请先使用上方共享操作栏完成 AI 视频总结。'
+  if (!(Number(props.selectedVideo?.transcriptVersion) > 0)) return '点击上方“生成高级摘要总结”后将先完成视频转录。'
   if (ingestError.value) return ingestError.value
   if (ingestLoading.value && !ingest.value) return '正在创建转录同步任务…'
   if (ingestStatus.value === 'SUCCESS') return '转录已完成规则清洗和固定 Token 切分，隐藏研究素材已就绪。'
@@ -70,7 +71,7 @@ const ingestStatusText = computed(() => {
     const progress = ingest.value?.progress != null ? ` · ${ingest.value.progress}%` : ''
     return `正在同步视频转录${stage}${progress}`
   }
-  return '进入高级模式后会自动同步当前转录。'
+  return '尚未同步；只有点击“生成高级摘要总结”才会启动。'
 })
 const canSend = computed(() => Boolean(
   props.capabilities.advanced_chat
@@ -122,24 +123,20 @@ watch(draft, (value) => {
 })
 
 watch(
-  () => [props.active, props.selectedVideo?.id, props.capabilities.advanced_report, ingestStatus.value],
-  ([active, videoId, enabled, sourceStatus]) => {
+  () => [props.active, props.selectedVideo?.id, props.analysisRunning,
+    props.selectedVideo?.agentReportStatus, props.capabilities.agent_ingest],
+  ([active, videoId, running, reportStatus, enabled]) => {
     stopReportPolling()
-    report.value = null
-    reportError.value = ''
-    if (active && videoId && enabled && sourceStatus === 'SUCCESS') ensureAdvancedReport()
-  },
-  { immediate: true }
-)
-
-watch(
-  () => [props.active, props.selectedVideo?.id, props.selectedVideo?.transcriptVersion, props.capabilities.agent_ingest],
-  ([active, videoId, transcriptVersion, enabled]) => {
     stopIngestPolling()
     ingestRequestVersion += 1
     ingest.value = null
+    report.value = null
     ingestError.value = ''
-    if (active && videoId && Number(transcriptVersion) > 0 && enabled) startIngestSync(ingestRequestVersion)
+    reportError.value = ''
+    if (active && videoId && enabled) {
+      refreshIngest(ingestRequestVersion, Boolean(running))
+      if (running || reportStatus) refreshAdvancedReport(Boolean(running))
+    }
   },
   { immediate: true }
 )
@@ -166,21 +163,23 @@ async function startIngestSync(requestVersion = ingestRequestVersion) {
   }
 }
 
-async function refreshIngest(requestVersion) {
+async function refreshIngest(requestVersion, keepWaiting = props.analysisRunning) {
   if (requestVersion !== ingestRequestVersion || !props.active || !props.selectedVideo?.id) return
   try {
     ingest.value = await api.getMindAgentVideoSync(props.selectedVideo.id)
-    scheduleIngestPolling(requestVersion)
+    if (ingestStatus.value === 'SUCCESS') refreshAdvancedReport(keepWaiting)
+    scheduleIngestPolling(requestVersion, keepWaiting)
   } catch (error) {
     if (requestVersion === ingestRequestVersion) ingestError.value = error.message || '转录同步状态读取失败'
   }
 }
 
-function scheduleIngestPolling(requestVersion) {
+function scheduleIngestPolling(requestVersion, keepWaiting = props.analysisRunning) {
   stopIngestPolling()
   if (requestVersion !== ingestRequestVersion || !props.active
-      || ['SUCCESS', 'FAILED', 'CANCELLED'].includes(ingestStatus.value)) return
-  ingestTimer = window.setTimeout(() => refreshIngest(requestVersion), 2000)
+      || ['SUCCESS', 'FAILED', 'CANCELLED'].includes(ingestStatus.value)
+      || (ingestStatus.value === 'UNSYNCED' && !keepWaiting)) return
+  ingestTimer = window.setTimeout(() => refreshIngest(requestVersion, keepWaiting), 2000)
 }
 
 function stopIngestPolling() {
@@ -201,33 +200,31 @@ async function ensureAdvancedReport() {
     report.value = await api.ensureAdvancedReport(props.selectedVideo.id)
     scheduleReportPolling()
   } catch (error) {
-    reportError.value = error.message || '研究报告启动失败'
+    reportError.value = error.message || '高级摘要总结启动失败'
   } finally {
     reportLoading.value = false
   }
 }
 
-async function refreshAdvancedReport() {
+async function refreshAdvancedReport(keepWaiting = props.analysisRunning) {
   if (!props.active || !props.selectedVideo?.id) return
   try {
     const current = await api.getAdvancedReport(props.selectedVideo.id)
     report.value = current
     const status = String(current?.status || '').toUpperCase()
-    if (status === 'NOT_STARTED' || status === 'READY' || status === 'SYNCING') {
-      await ensureAdvancedReport()
-      return
-    }
-    if (!['SUCCESS', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(status)) scheduleReportPolling()
+    if (!['SUCCESS', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(status)
+        && (keepWaiting || !['NOT_STARTED', 'READY', 'SYNCING'].includes(status))) scheduleReportPolling(keepWaiting)
   } catch (error) {
-    reportError.value = error.message || '研究报告状态读取失败'
+    reportError.value = error.message || '高级摘要总结状态读取失败'
+    if (keepWaiting) scheduleReportPolling(true)
   }
 }
 
-function scheduleReportPolling() {
+function scheduleReportPolling(keepWaiting = props.analysisRunning) {
   stopReportPolling()
   const status = String(report.value?.status || '').toUpperCase()
   if (!props.active || ['SUCCESS', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(status)) return
-  reportTimer = window.setTimeout(refreshAdvancedReport, 2000)
+  reportTimer = window.setTimeout(() => refreshAdvancedReport(keepWaiting), 2000)
 }
 
 function stopReportPolling() {
@@ -278,7 +275,7 @@ function toggleWebSearch() {
 async function ensureAgentReady() {
   if (!props.selectedVideo?.id) { ElMessage.warning('请先选择一个已解析的视频'); return false }
   if (!(Number(props.selectedVideo?.transcriptVersion) > 0)) {
-    ElMessage.warning('请先使用共享操作栏完成 AI 视频总结')
+    ElMessage.warning('请先点击共享操作栏生成高级摘要总结')
     return false
   }
   const binding = await api.mindAgentBindingStatus()
@@ -291,7 +288,7 @@ async function ensureAgentReady() {
   const reportStatus = String(report.value?.status || '').toUpperCase()
   if (!['SUCCESS', 'COMPLETED'].includes(reportStatus) || !report.value?.reportKnowledgeBaseId) {
     await ensureAdvancedReport()
-    ElMessage.info('正在生成深度研究报告并建立正式知识库，请稍后重试')
+    ElMessage.info('正在生成高级摘要总结并建立正式知识库，请稍后重试')
     return false
   }
   return true
@@ -379,10 +376,10 @@ function referenceTitle(reference, index) {
 }
 
 function videoStatus(video) {
-  if (video.id === props.selectedVideo?.id && ['SUCCESS', 'COMPLETED'].includes(String(report.value?.status).toUpperCase())) return '报告已完成'
-  if (video.summaryStatus === 'SUCCESS') return '已解析'
-  if (['PROCESSING', 'PENDING'].includes(video.summaryStatus)) return '处理中'
-  return video.transcriptVersion > 0 ? '已转录' : '待解析'
+  if (video.id === props.selectedVideo?.id && ['SUCCESS', 'COMPLETED'].includes(String(report.value?.status).toUpperCase())) return '高级摘要已完成'
+  if (video.agentReportStatus === 'SUCCESS') return '高级摘要已完成'
+  if (['PROCESSING', 'PENDING', 'RUNNING'].includes(video.agentReportStatus)) return '高级摘要处理中'
+  return video.transcriptVersion > 0 ? '待生成高级摘要' : '待转录'
 }
 </script>
 
@@ -418,7 +415,7 @@ function videoStatus(video) {
       <header>
         <div>
           <span>RESEARCH</span>
-          <h2>研究报告</h2>
+          <h2>高级摘要总结</h2>
         </div>
         <a
           v-if="report?.downloadUrl"
@@ -467,9 +464,9 @@ function videoStatus(video) {
       <div class="advanced-notice">
         <strong>{{ capabilities.agent_enabled ? 'Agent Platform 已接入' : 'Agent Platform 未连接' }}</strong>
         <span v-if="capabilities.agent_ingest">{{ ingestStatusText }}</span>
-        <span v-else-if="capabilities.advanced_chat">高级问答由独立 Agent Platform 执行；研究报告进入高级模式后自动生成或恢复。</span>
+        <span v-else-if="capabilities.advanced_chat">高级问答由独立 Agent Platform 执行；高级摘要总结仅在明确点击后生成。</span>
         <span v-else-if="capabilities.agent_enabled">VideoMind 已完成平台连接，高级问答等功能将按独立能力开关开放。</span>
-        <span v-else>完成 Agent Platform 连接配置后，可使用高级知识库问答、研究报告与内容生成能力。</span>
+        <span v-else>完成 Agent Platform 连接配置后，可使用高级知识库问答、高级摘要总结与内容生成能力。</span>
         <button
           v-if="capabilities.agent_ingest && (ingestError || ['FAILED', 'CANCELLED'].includes(ingestStatus))"
           type="button"
@@ -482,7 +479,7 @@ function videoStatus(video) {
         <div v-if="!messages.length" class="agent-empty">
           <div class="agent-mark">VM</div>
           <h3>围绕当前视频继续探索</h3>
-          <p>高级模式优先使用深度研究报告知识库；报告未覆盖细节时，Agent 会回查隐藏的转录原文。</p>
+          <p>高级模式优先使用高级摘要总结知识库；摘要未覆盖细节时，Agent 会回查隐藏的转录原文。</p>
         </div>
 
         <section v-if="messages.length" class="advanced-messages" aria-live="polite">

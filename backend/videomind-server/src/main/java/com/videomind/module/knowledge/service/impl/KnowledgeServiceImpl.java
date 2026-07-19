@@ -46,7 +46,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
         if (taskRecord.getTaskStatus() != TaskStatus.SUCCESS) {
             throw new BizException(400, "只有解析成功的任务才能加入知识库");
         }
-        if (agentProperties.isEnabled() && agentProperties.isIngestEnabled()) {
+        if (usesAgentKnowledge(taskRecord)) {
             VideoFile video = videoFileService.getVideoDetail(taskRecord.getVideoId(), userId);
             if (!StringUtils.hasText(video.getAgentIngestStatus())) {
                 throw new BizException(409, "该视频尚未提交 Agent Platform，请重新执行视频解析");
@@ -54,7 +54,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
             return agentStatus(taskId, video);
         }
 
-        VideoTranscription transcription = getTranscription(taskId, userId);
+        VideoTranscription transcription = getTranscription(taskRecord, userId);
         AiSummaryResult summary = getSummary(taskId, userId);
         List<KnowledgeChunk> chunks = buildChunks(taskRecord, transcription, summary);
         if (chunks.isEmpty()) {
@@ -91,7 +91,7 @@ public class KnowledgeServiceImpl implements KnowledgeService {
     @Override
     public KnowledgeStatusResponse getVectorizeStatus(Long taskId, Long userId) {
         TaskRecord taskRecord = taskRecordService.getTask(taskId, userId);
-        if (agentProperties.isEnabled() && agentProperties.isIngestEnabled()) {
+        if (usesAgentKnowledge(taskRecord)) {
             return agentStatus(taskId, videoFileService.getVideoDetail(taskRecord.getVideoId(), userId));
         }
         KnowledgeStatusResponse status = knowledgeStatusRepository.getStatus(taskId);
@@ -125,10 +125,18 @@ public class KnowledgeServiceImpl implements KnowledgeService {
                 .build();
     }
 
-    private VideoTranscription getTranscription(Long taskId, Long userId) {
+    private boolean usesAgentKnowledge(TaskRecord taskRecord) {
+        return "ADVANCED".equalsIgnoreCase(taskRecord.getAnalysisMode())
+                && agentProperties.isEnabled()
+                && agentProperties.isIngestEnabled();
+    }
+
+    private VideoTranscription getTranscription(TaskRecord taskRecord, Long userId) {
         return videoTranscriptionMapper.selectOne(new LambdaQueryWrapper<VideoTranscription>()
-                .eq(VideoTranscription::getTaskId, taskId)
-                .eq(VideoTranscription::getUserId, userId));
+                .eq(VideoTranscription::getVideoId, taskRecord.getVideoId())
+                .eq(VideoTranscription::getUserId, userId)
+                .orderByDesc(VideoTranscription::getUpdatedTime)
+                .last("LIMIT 1"));
     }
 
     private AiSummaryResult getSummary(Long taskId, Long userId) {

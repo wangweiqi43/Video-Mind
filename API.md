@@ -335,14 +335,15 @@ curl -X POST http://localhost:8080/api/videos/multipart/{uploadId}/complete
 - Method：`POST`
 - Path：`/api/tasks/analyze`
 - Content-Type：`application/json`
-- 说明：为指定视频创建异步解析任务。后端发送 RocketMQ 消息，由消费者执行 FFmpeg 音频提取、ASR、摘要生成，并写入转录和摘要结果。
+- 说明：为指定视频创建模式隔离的异步解析任务。音频提取和 ASR 可跨模式复用；`NORMAL` 只生成 VideoMind 普通摘要，`ADVANCED` 只推进 MindAgent 高级摘要总结。
 
 请求体：
 
 ```json
 {
   "videoId": 12,
-  "autoVectorize": true
+  "autoVectorize": true,
+  "applicationMode": "NORMAL"
 }
 ```
 
@@ -352,6 +353,7 @@ curl -X POST http://localhost:8080/api/videos/multipart/{uploadId}/complete
 |---|---|---:|---|
 | videoId | number | 是 | 视频 ID |
 | autoVectorize | boolean | 否 | 解析成功后是否自动向量化入库，默认 `false` |
+| applicationMode | string | 否 | `NORMAL` 或 `ADVANCED`，默认 `NORMAL`；高级模式忽略 `autoVectorize` |
 
 响应 `data`：
 
@@ -360,6 +362,7 @@ curl -X POST http://localhost:8080/api/videos/multipart/{uploadId}/complete
 | taskId | number | 解析任务 ID |
 | status | string | 任务状态，见 `TaskStatus` |
 | reused | boolean | 是否复用了已有任务或已有成功结果 |
+| applicationMode | string | 当前任务所属模式 |
 
 示例：
 
@@ -391,6 +394,7 @@ curl -X POST http://localhost:8080/api/tasks/analyze \
 | videoMd5 | string | 视频 MD5 |
 | taskStatus | string | 任务状态 |
 | autoVectorize | boolean | 是否自动向量化 |
+| analysisMode | string | `NORMAL` 或 `ADVANCED` |
 | errorMessage | string/null | 失败原因 |
 | startedTime | string/null | 开始处理时间 |
 | finishedTime | string/null | 完成时间 |
@@ -437,13 +441,14 @@ curl http://localhost:8080/api/tasks/26/result
 
 - Method：`GET`
 - Path：`/api/tasks/video/{videoId}/latest-success`
-- 说明：查询指定视频最近一次解析成功的任务。前端切换视频时可用该接口加载历史结果。
+- 说明：查询指定视频在指定模式下最近一次成功任务；缺省查询普通模式，防止普通/高级摘要串用。
 
 路径参数：
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | videoId | number | 是 | 视频 ID |
+| applicationMode | string | 否 | query 参数，`NORMAL` 或 `ADVANCED`，默认 `NORMAL` |
 
 响应 `data`：同“查询任务详情”的任务对象；如果没有成功任务，可能返回 `null`。
 

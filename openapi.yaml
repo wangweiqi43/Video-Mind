@@ -236,6 +236,7 @@ paths:
             example:
               videoId: 12
               autoVectorize: true
+              applicationMode: NORMAL
       responses:
         "200":
           description: 解析任务创建结果
@@ -284,6 +285,13 @@ paths:
       description: 查询指定视频最近一次解析成功的任务。
       parameters:
         - $ref: "#/components/parameters/VideoId"
+        - name: applicationMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [NORMAL, ADVANCED]
+            default: NORMAL
       responses:
         "200":
           description: 最近一次成功任务，可能为 null
@@ -615,6 +623,21 @@ components:
           type: integer
           nullable: true
           example: null
+        summaryStatus:
+          type: string
+          nullable: true
+        summaryVersion:
+          type: integer
+          nullable: true
+        agentReportStatus:
+          type: string
+          nullable: true
+        agentReportVersion:
+          type: integer
+          nullable: true
+        agentReportProfile:
+          type: string
+          nullable: true
         createdTime:
           type: string
           example: "2026-05-30T16:57:04"
@@ -868,6 +891,10 @@ components:
           type: boolean
           default: false
           example: true
+        applicationMode:
+          type: string
+          enum: [NORMAL, ADVANCED]
+          default: NORMAL
 
     AnalyzeTaskCreateResponse:
       type: object
@@ -881,6 +908,9 @@ components:
         reused:
           type: boolean
           example: false
+        applicationMode:
+          type: string
+          enum: [NORMAL, ADVANCED]
 
     AnalyzeTaskCreateApiResponse:
       type: object
@@ -917,6 +947,9 @@ components:
         autoVectorize:
           type: boolean
           example: true
+        analysisMode:
+          type: string
+          enum: [NORMAL, ADVANCED]
         errorMessage:
           type: string
           nullable: true

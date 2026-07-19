@@ -6,7 +6,7 @@ VideoMind 是一个本地可运行的 AI 视频内容理解平台。当前仓库
 
 当前也已补充 Vue 3 前端工作台，支持视频上传、AI 总结、知识库向量化和智能助手对话。
 
-项目现已加入 Agent Platform 高级模式：VideoMind 只向 MindAgent 提交 UTF-8 转录 TXT；MindAgent 完成规则清洗、固定 Token 切分、深度研究和报告知识库发布。高级问答优先使用研究报告，必要时回查隐藏转录原文；普通模式继续使用原有 RAG 链路。
+项目现已加入 Agent Platform 高级模式：上传、音频提取和 ASR 是普通/高级模式共享的公共预处理；只有用户在当前模式明确点击分析按钮后，才会执行该模式的摘要链路。VideoMind 只向 MindAgent 提交 UTF-8 转录 TXT；MindAgent 完成规则清洗、固定 Token 切分、高完整度高级摘要和报告知识库发布。高级问答优先使用高级摘要知识库，必要时回查隐藏转录原文；普通模式继续使用原有 RAG 链路。
 
 ## 已完成内容
 
@@ -24,7 +24,7 @@ VideoMind 是一个本地可运行的 AI 视频内容理解平台。当前仓库
 - `POST /api/chat/message` 生成 query embedding，检索视频知识片段，返回 Mock 回答和引用来源
 - 智能助手支持最近窗口记忆，并在长会话时维护轻量历史摘要
 - Agent Client 统一处理签名、租户/用户上下文、幂等键、超时重试、SSE、错误码和 Trace ID
-- 前端支持普通/高级双模式：普通模式使用“仅知识库 / 知识库扩展”，高级模式预留 Agent 对话、联网研究、PPT 与报告导出
+- 前端支持普通/高级双模式：切换模式只读取状态，不产生 AI Token 消耗；普通模式明确生成本地摘要，高级模式明确生成 MindAgent 高级摘要总结
 - 视频支持 Agent PPT 参数配置、进度、失败重试、下载和历史版本
 - `POST /api/videos/multipart/init` 初始化分片上传会话
 - `POST /api/videos/multipart/{uploadId}/chunk?partNumber=1` 上传分片，Redis Bitmap 记录断点状态
@@ -212,9 +212,9 @@ curl -X POST http://localhost:8080/api/videos/multipart/<uploadId>/complete
 
 ## 阶段边界
 
-普通模式的 ASR、摘要和本地知识库完全由 VideoMind 执行，不调用 MindAgent。只有用户进入高级模式且当前视频已有转录时，VideoMind 才幂等同步该转录；不会传输视频、音频或普通摘要。
+上传视频不会自动解析，切换模式也不会产生请求或 Token 消耗。普通模式的摘要和本地知识库完全由 VideoMind 执行，不调用 MindAgent；高级模式只有在用户点击“生成高级摘要总结”后才复用或生成 ASR、幂等同步转录并启动 MindAgent 高级摘要。两种模式只共享 ASR，不共享摘要状态；不会传输视频、音频或普通摘要。
 
-MindAgent 为每个视频维护隐藏的转录素材库和可见的研究报告库。转录使用规则清洗与 `600 token / 80 token` 重叠切分；研究报告使用 Markdown 标题语义切分。高级聊天和 PPT 只使用正式报告库，报告覆盖不足时由 MindAgent 回查转录素材。自动研究默认不开启联网搜索。
+MindAgent 为每个视频维护隐藏的转录素材库和可见的高级摘要知识库。转录使用规则清洗与 `600 token / 80 token` 重叠切分；高级摘要使用 `VIDEOMIND_STUDY_NOTES_V1` 分段建立事实台账，保留数字、页码、人物、条件和例外，最终 Markdown 使用标题语义切分。高级聊天优先使用正式高级摘要库，覆盖不足时由 MindAgent 回查转录素材。自动高级摘要默认不开启联网搜索。
 
 ## Docker 注意事项
 

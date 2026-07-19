@@ -6,6 +6,7 @@ import com.videomind.module.agent.entity.VideoAgentTask;
 import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
+import com.videomind.module.task.service.TaskRecordService;
 import java.time.LocalDateTime;
 import java.util.Locale;
 import org.springframework.stereotype.Service;
@@ -17,10 +18,13 @@ public class AgentTaskStateService {
 
     private final VideoAgentTaskMapper tasks;
     private final VideoFileService videos;
+    private final TaskRecordService taskRecords;
 
-    public AgentTaskStateService(VideoAgentTaskMapper tasks, VideoFileService videos) {
+    public AgentTaskStateService(VideoAgentTaskMapper tasks, VideoFileService videos,
+                                 TaskRecordService taskRecords) {
         this.tasks = tasks;
         this.videos = videos;
+        this.taskRecords = taskRecords;
     }
 
     @Transactional
@@ -80,17 +84,35 @@ public class AgentTaskStateService {
             } else if ("FAILED".equals(incoming) || "CANCELLED".equals(incoming)) {
                 video.setAgentLastError(task.getErrorMessage());
             }
-        } else if ("RESEARCH".equals(task.getTaskType()) && "SUCCESS".equals(incoming)) {
+        } else if ("RESEARCH".equals(task.getTaskType())) {
+            video.setAgentReportStatus(incoming);
+            video.setAgentReportVersion(task.getVersion());
+            video.setAgentReportProfile(task.getProfileVersion());
+            if ("SUCCESS".equals(incoming)) {
             String reportKnowledgeBaseId=text(result,"reportKnowledgeBaseId");
             if(!StringUtils.hasText(task.getReportId())||!StringUtils.hasText(reportKnowledgeBaseId)){
                 task.setStatus("FAILED");task.setStage("FAILED");task.setErrorCode("INVALID_RESPONSE");task.setErrorMessage("Agent Platform 研究成功响应缺少报告或报告知识库 ID");tasks.updateById(task);
+                video.setAgentReportStatus("FAILED");video.setAgentLastError(task.getErrorMessage());
+                failSourceTask(task, task.getErrorMessage());
+            }else{video.setAgentReportKnowledgeBaseId(reportKnowledgeBaseId);video.setAgentLastError(null);completeSourceTask(task);}
+            } else if ("FAILED".equals(incoming) || "CANCELLED".equals(incoming)) {
                 video.setAgentLastError(task.getErrorMessage());
-            }else{video.setAgentReportKnowledgeBaseId(reportKnowledgeBaseId);video.setAgentLastError(null);}
+                failSourceTask(task, task.getErrorMessage());
+            }
         } else if ("PRESENTATION".equals(task.getTaskType()) && "SUCCESS".equals(incoming)) {
             video.setLatestPresentationId(task.getArtifactId());
         }
         video.setAgentUpdatedAt(LocalDateTime.now());
         videos.updateById(video);
+    }
+
+    private void completeSourceTask(VideoAgentTask task) {
+        if (task.getSourceTaskId() != null) taskRecords.markSuccess(task.getSourceTaskId(), task.getUserId());
+    }
+
+    private void failSourceTask(VideoAgentTask task, String message) {
+        if (task.getSourceTaskId() != null) taskRecords.markFailed(task.getSourceTaskId(), task.getUserId(),
+                StringUtils.hasText(message) ? message : "高级摘要生成失败");
     }
 
     public String normalizeStatus(String value) {

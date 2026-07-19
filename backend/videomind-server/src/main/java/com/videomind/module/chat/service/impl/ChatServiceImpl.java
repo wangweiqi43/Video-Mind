@@ -195,7 +195,7 @@ public class ChatServiceImpl implements ChatService {
                 ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
                 VideoFile video = videoFileService.getVideoDetail(request.getVideoId(), userId);
                 if (!StringUtils.hasText(video.getAgentReportKnowledgeBaseId())) {
-                    throw new BizException(409, "当前视频的深度研究报告知识库尚未就绪，请稍后重试");
+                    throw new BizException(409, "当前视频的高级摘要总结知识库尚未就绪，请稍后重试");
                 }
                 if (!StringUtils.hasText(session.getMindagentConversationId())) {
                     session.setMindagentConversationId(agentChatClient.createConversation(

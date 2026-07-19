@@ -12,6 +12,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -38,17 +41,58 @@ public class FfmpegAudioExtractorClient implements AudioExtractorClient {
             Path logFile = taskDir.resolve("ffmpeg.log");
 
             downloadVideo(videoFile, inputVideo);
+            Integer durationSeconds = probeDurationIfAvailable(inputVideo);
             runFfmpeg(inputVideo, outputAudio, logFile);
+            if (durationSeconds == null) durationSeconds = durationFromFfmpegLog(logFile);
 
             return AudioExtractionResult.builder()
                     .audioPath(outputAudio.toString())
-                    .durationSeconds(null)
+                    .durationSeconds(durationSeconds)
                     .build();
         } catch (BizException ex) {
             throw ex;
         } catch (Exception ex) {
             throw new BizException(500, "FFmpeg 提取音频失败：" + ex.getMessage());
         }
+    }
+
+    private Integer probeDurationIfAvailable(Path inputVideo) throws Exception {
+        Process process;
+        try {
+            process = new ProcessBuilder(
+                    ffmpegProperties.getProbeBinaryPath(),
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    inputVideo.toString())
+                    .redirectErrorStream(true)
+                    .start();
+        } catch (java.io.IOException missingProbe) {
+            return null;
+        }
+        boolean finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new BizException(500, "ffprobe 获取视频时长超时");
+        }
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        if (process.exitValue() != 0) throw new BizException(500, "ffprobe 无法读取视频时长");
+        try {
+            double seconds = Double.parseDouble(output);
+            return seconds > 0 ? Math.max(1, (int) Math.ceil(seconds)) : null;
+        } catch (NumberFormatException invalid) {
+            throw new BizException(500, "ffprobe 返回了无效的视频时长");
+        }
+    }
+
+    private Integer durationFromFfmpegLog(Path logFile) throws Exception {
+        String log = Files.readString(logFile, StandardCharsets.UTF_8);
+        Matcher matcher = Pattern.compile("Duration:\\s*(\\d{2}):(\\d{2}):(\\d{2}(?:\\.\\d+)?)").matcher(log);
+        if (!matcher.find()) throw new BizException(500, "FFmpeg 无法读取视频时长");
+        double seconds = Integer.parseInt(matcher.group(1)) * 3600d
+                + Integer.parseInt(matcher.group(2)) * 60d
+                + Double.parseDouble(matcher.group(3));
+        return seconds > 0 ? Math.max(1, (int) Math.ceil(seconds)) : null;
     }
 
     private void downloadVideo(VideoFile videoFile, Path inputVideo) throws Exception {

@@ -32,7 +32,7 @@ public class AgentPresentationService {
         }
         VideoFile video = videoFileService.getVideoDetail(videoId, userId);
         if (video.getAgentReportKnowledgeBaseId() == null) {
-            throw new BizException(409, "视频深度研究报告知识库尚未就绪，暂时不能生成 PPT");
+            throw new BizException(409, "视频高级摘要总结知识库尚未就绪，暂时不能生成 PPT");
         }
         int version = nextVersion(videoId, userId);
         AgentTaskClient.PresentationOptions options = toOptions(request);

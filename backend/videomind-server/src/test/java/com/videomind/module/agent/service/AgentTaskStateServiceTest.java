@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.videomind.agentclient.AgentTaskClient;
 import com.videomind.module.agent.entity.VideoAgentTask;
 import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
+import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
 import org.junit.jupiter.api.Test;
@@ -18,7 +19,8 @@ class AgentTaskStateServiceTest {
 
     private final VideoAgentTaskMapper tasks = mock(VideoAgentTaskMapper.class);
     private final VideoFileService videos = mock(VideoFileService.class);
-    private final AgentTaskStateService service = new AgentTaskStateService(tasks, videos);
+    private final AgentTaskStateService service = new AgentTaskStateService(
+            tasks, videos, mock(TaskRecordService.class));
 
     @Test
     void ingestSuccessUpdatesOnlyAgentFieldsAndNeverOverwritesNormalSummary() throws Exception {

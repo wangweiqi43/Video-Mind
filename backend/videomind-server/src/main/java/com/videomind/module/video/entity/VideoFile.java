@@ -28,6 +28,9 @@ public class VideoFile {
     private Integer transcriptVersion;
     private Integer agentIngestVersion;
     private String agentIngestStatus;
+    private String agentReportStatus;
+    private Integer agentReportVersion;
+    private String agentReportProfile;
     private String summaryStatus;
     private Integer summaryVersion;
     private String latestSummaryId;

@@ -10,5 +10,7 @@ public class AnalyzeTaskCreateRequest {
     private Long videoId;
 
     private Boolean autoVectorize = false;
+
+    private String applicationMode = "NORMAL";
 }
 

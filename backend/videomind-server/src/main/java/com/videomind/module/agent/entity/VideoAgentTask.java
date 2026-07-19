@@ -26,6 +26,7 @@ public class VideoAgentTask {
     private String reportId;
     private String outputUrl;
     private Integer version;
+    private String profileVersion;
     private String requestJson;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

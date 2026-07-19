@@ -24,6 +24,7 @@ public class AdvancedReportResponse {
     private JsonNode references;
     private Integer transcriptVersion;
     private Integer targetLength;
+    private String outputProfile;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

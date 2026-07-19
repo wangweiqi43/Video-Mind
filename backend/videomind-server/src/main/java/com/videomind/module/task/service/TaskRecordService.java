@@ -11,6 +11,8 @@ public interface TaskRecordService extends IService<TaskRecord> {
 
     TaskRecord getLatestSuccessfulTaskByVideo(Long videoId, Long userId);
 
+    TaskRecord getLatestSuccessfulTaskByVideo(Long videoId, Long userId, String applicationMode);
+
     TaskRecord getTask(Long taskId, Long userId);
 
     TaskRecord markProcessing(Long taskId, Long userId);

@@ -25,6 +25,7 @@ import org.springframework.util.StringUtils;
 public class AdvancedReportService {
 
     private static final String TASK_TYPE = "RESEARCH";
+    public static final String PROFILE = "VIDEOMIND_STUDY_NOTES_V1";
 
     private final AgentClientProperties properties;
     private final AgentTaskClient client;
@@ -34,6 +35,10 @@ public class AdvancedReportService {
     private final ObjectMapper objectMapper;
 
     public AdvancedReportResponse ensure(Long videoId, Long userId) {
+        return ensure(videoId, userId, null);
+    }
+
+    public AdvancedReportResponse ensure(Long videoId, Long userId, Long sourceTaskId) {
         requireEnabled();
         VideoFile video = videos.getVideoDetail(videoId, userId);
         int transcriptVersion = transcriptVersion(video);
@@ -44,7 +49,7 @@ public class AdvancedReportService {
 
         if (!"SUCCESS".equalsIgnoreCase(video.getAgentIngestStatus())
                 || !StringUtils.hasText(video.getAgentSourceKnowledgeBaseId())) {
-            AgentVideoSyncResponse sync = syncService.sync(videoId, userId);
+            AgentVideoSyncResponse sync = syncService.sync(videoId, userId, sourceTaskId);
             String status = sync.getStatus();
             return AdvancedReportResponse.builder()
                     .videoId(videoId)
@@ -58,8 +63,19 @@ public class AdvancedReportService {
 
         int attempt = attempts(videoId, userId, transcriptVersion) + 1;
         int targetLength = targetLength(video.getDurationSeconds());
+        if (existing != null && isRetryableTerminal(existing.getStatus())) {
+            AgentTaskClient.AgentTaskResult retried = client.retry(existing.getAgentTaskId(), userId,
+                    "retry:advanced-summary:" + existing.getAgentTaskId() + ":attempt:" + attempt, null);
+            VideoAgentTask retry = new VideoAgentTask();retry.setVideoId(videoId);retry.setUserId(userId);retry.setSourceTaskId(sourceTaskId);
+            retry.setAgentTaskId(retried.taskId());retry.setTaskType(TASK_TYPE);retry.setStatus(retried.status());retry.setProgress(10);
+            retry.setArtifactId(retried.artifactId());retry.setOutputUrl(retried.downloadUrl());retry.setVersion(transcriptVersion);retry.setProfileVersion(PROFILE);
+            retry.setRequestJson(json(Map.of("attempt",attempt,"targetLength",targetLength,"transcriptVersion",transcriptVersion,"webSearch",false,"retriedTaskId",existing.getAgentTaskId())));
+            retry.setCreatedAt(LocalDateTime.now());retry.setUpdatedAt(LocalDateTime.now());tasks.insert(retry);
+            video.setAgentReportStatus(retry.getStatus());video.setAgentReportVersion(transcriptVersion);video.setAgentReportProfile(PROFILE);video.setAgentUpdatedAt(LocalDateTime.now());videos.updateById(video);
+            return response(retry,false);
+        }
         String question = "基于视频《" + safeTitle(video.getOriginalFilename())
-                + "》的完整转录内容，生成研究级报告，提炼核心发现、证据、分歧与局限，并给出结论和建议。";
+                + "》的完整转录内容生成高级摘要总结：先给核心概览，再按原顺序整理接近逐字的完整学习笔记；保留所有数字、页码、章节、分值、人名、理论、定义、步骤、例子、否定、条件、例外和不确定表达。";
         AgentTaskClient.AgentTaskResult result = client.createResearch(
                 videoId,
                 video.getAgentSourceKnowledgeBaseId(),
@@ -70,11 +86,13 @@ public class AdvancedReportService {
                 safeTitle(video.getOriginalFilename()),
                 userId,
                 "advanced-report:video:" + videoId + ":transcript:" + transcriptVersion + ":attempt:" + attempt,
-                null
+                null,
+                PROFILE
         );
         VideoAgentTask task = new VideoAgentTask();
         task.setVideoId(videoId);
         task.setUserId(userId);
+        task.setSourceTaskId(sourceTaskId);
         task.setAgentTaskId(result.taskId());
         task.setTaskType(TASK_TYPE);
         task.setStatus(result.status());
@@ -82,6 +100,7 @@ public class AdvancedReportService {
         task.setArtifactId(result.artifactId());
         task.setOutputUrl(result.downloadUrl());
         task.setVersion(transcriptVersion);
+        task.setProfileVersion(PROFILE);
         task.setRequestJson(json(Map.of(
                 "attempt", attempt,
                 "targetLength", targetLength,
@@ -92,6 +111,11 @@ public class AdvancedReportService {
         task.setUpdatedAt(LocalDateTime.now());
         try {
             tasks.insert(task);
+            video.setAgentReportStatus(task.getStatus());
+            video.setAgentReportVersion(transcriptVersion);
+            video.setAgentReportProfile(PROFILE);
+            video.setAgentUpdatedAt(LocalDateTime.now());
+            videos.updateById(video);
             return response(task, false);
         } catch (DuplicateKeyException duplicate) {
             VideoAgentTask concurrent = latest(videoId, userId, transcriptVersion);
@@ -136,6 +160,7 @@ public class AdvancedReportService {
                         : null)
                 .transcriptVersion(task.getVersion())
                 .targetLength(requestInt(task, "targetLength", 1500))
+                .outputProfile(StringUtils.hasText(task.getProfileVersion()) ? task.getProfileVersion() : "LIGHT_RESEARCH_V1")
                 .createdAt(task.getCreatedAt())
                 .updatedAt(task.getUpdatedAt());
         if (includeReport && isSuccess(task.getStatus()) && StringUtils.hasText(task.getReportId())) {
@@ -154,6 +179,7 @@ public class AdvancedReportService {
                 .eq(VideoAgentTask::getUserId, userId)
                 .eq(VideoAgentTask::getTaskType, TASK_TYPE)
                 .eq(VideoAgentTask::getVersion, transcriptVersion)
+                .eq(VideoAgentTask::getProfileVersion, PROFILE)
                 .orderByDesc(VideoAgentTask::getCreatedAt)
                 .last("LIMIT 1"));
     }
@@ -177,14 +203,14 @@ public class AdvancedReportService {
 
     private int transcriptVersion(VideoFile video) {
         if (video.getTranscriptVersion() == null || video.getTranscriptVersion() < 1) {
-            throw new BizException(409, "视频尚未完成转录，无法生成研究报告");
+            throw new BizException(409, "视频尚未完成转录，无法生成高级摘要总结");
         }
         return video.getTranscriptVersion();
     }
 
     private void requireEnabled() {
         if (!properties.isEnabled() || !properties.isAdvancedReportEnabled()) {
-            throw new BizException(503, "高级研究报告尚未启用");
+            throw new BizException(503, "高级摘要总结尚未启用");
         }
     }
 
@@ -214,7 +240,7 @@ public class AdvancedReportService {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (Exception ex) {
-            throw new IllegalStateException("无法保存高级报告请求", ex);
+            throw new IllegalStateException("无法保存高级摘要请求", ex);
         }
     }
 

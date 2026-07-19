@@ -19,6 +19,7 @@ public class TaskRecord {
     private String videoMd5;
     private TaskStatus taskStatus;
     private Boolean autoVectorize;
+    private String analysisMode;
     private Integer retryCount;
     private String errorMessage;
     private LocalDateTime startedTime;

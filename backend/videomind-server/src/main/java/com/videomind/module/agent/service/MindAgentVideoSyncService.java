@@ -11,10 +11,8 @@ import com.videomind.infrastructure.storage.dto.StoredObject;
 import com.videomind.module.agent.entity.VideoAgentTask;
 import com.videomind.module.agent.dto.AgentVideoSyncResponse;
 import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
-import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.entity.VideoTranscription;
 import com.videomind.module.task.mapper.VideoTranscriptionMapper;
-import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
 import java.io.ByteArrayInputStream;
@@ -34,7 +32,6 @@ import org.springframework.util.StringUtils;
 public class MindAgentVideoSyncService {
 
     private final VideoFileService videos;
-    private final TaskRecordService tasks;
     private final VideoTranscriptionMapper transcripts;
     private final ObjectStorageService storage;
     private final AgentTaskClient client;
@@ -44,13 +41,12 @@ public class MindAgentVideoSyncService {
     private final RedissonClient redisson;
     private final AgentTaskStateService stateService;
 
-    public MindAgentVideoSyncService(VideoFileService videos, TaskRecordService tasks,
+    public MindAgentVideoSyncService(VideoFileService videos,
                                      VideoTranscriptionMapper transcripts, ObjectStorageService storage,
                                      AgentTaskClient client, AgentClientProperties properties,
                                      VideoAgentTaskMapper agentTasks, ObjectMapper objectMapper,
                                      RedissonClient redisson, AgentTaskStateService stateService) {
         this.videos = videos;
-        this.tasks = tasks;
         this.transcripts = transcripts;
         this.storage = storage;
         this.client = client;
@@ -62,6 +58,10 @@ public class MindAgentVideoSyncService {
     }
 
     public AgentVideoSyncResponse sync(Long videoId, Long userId) {
+        return sync(videoId, userId, null);
+    }
+
+    public AgentVideoSyncResponse sync(Long videoId, Long userId, Long sourceTaskId) {
         requireEnabled();
         VideoFile video = requireTranscript(videoId, userId);
         int version = video.getTranscriptVersion();
@@ -88,7 +88,7 @@ public class MindAgentVideoSyncService {
                     || "CANCELLED".equalsIgnoreCase(latest.getStatus()))) {
                 return retry(video, latest);
             }
-            return create(video, userId, version);
+            return create(video, userId, version, sourceTaskId);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new BizException(503, "同步锁等待被中断，请稍后重试");
@@ -105,12 +105,12 @@ public class MindAgentVideoSyncService {
         return latest == null ? unsynced(videoId, version) : response(video, latest);
     }
 
-    private AgentVideoSyncResponse create(VideoFile video, Long userId, int version) {
-        TaskRecord task = tasks.getLatestSuccessfulTaskByVideo(video.getId(), userId);
-        if (task == null) throw new BizException(409, "视频尚未完成转录");
+    private AgentVideoSyncResponse create(VideoFile video, Long userId, int version, Long sourceTaskId) {
         VideoTranscription transcript = transcripts.selectOne(new LambdaQueryWrapper<VideoTranscription>()
-                .eq(VideoTranscription::getTaskId, task.getId())
-                .eq(VideoTranscription::getUserId, userId));
+                .eq(VideoTranscription::getVideoId, video.getId())
+                .eq(VideoTranscription::getUserId, userId)
+                .orderByDesc(VideoTranscription::getUpdatedTime)
+                .last("LIMIT 1"));
         if (transcript == null || !StringUtils.hasText(transcript.getTranscriptionText())) {
             throw new BizException(409, "未找到视频转录文本");
         }
@@ -125,10 +125,11 @@ public class MindAgentVideoSyncService {
         metadata.put("filename", video.getOriginalFilename());
         metadata.put("fileMd5", video.getFileMd5());
         metadata.put("durationSeconds", video.getDurationSeconds());
+        long effectiveSourceTaskId = sourceTaskId == null ? transcript.getTaskId() : sourceTaskId;
         AgentTaskClient.AgentTaskResult result = client.ingest(new AgentTaskClient.AgentIngestRequest(
-                        video.getId(), task.getId(), version, transcriptUrl, transcript.getLanguage(), true, metadata),
+                        video.getId(), effectiveSourceTaskId, version, transcriptUrl, transcript.getLanguage(), true, metadata),
                 userId, "ingest:video:" + video.getId() + ":transcript:" + version, null);
-        VideoAgentTask local = saveTask(video, task.getId(), version, result,
+        VideoAgentTask local = saveTask(video, effectiveSourceTaskId, version, result,
                 Map.of("transcriptObjectKey", objectKey, "attempt", 1));
         applyInitial(video, local, result.knowledgeBaseId());
         return response(video, local);
