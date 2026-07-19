@@ -17,6 +17,7 @@ const emit = defineEmits([
   'upload',
   'analyze',
   'play',
+  'show-transcript',
   'toggle-auto-vectorize',
   'vectorize'
 ])
@@ -55,6 +56,15 @@ const advanced = computed(() => props.applicationMode.toUpperCase() === 'ADVANCE
         @click="emit('play')"
       >
         播放视频
+      </el-button>
+      <el-button
+        v-if="advanced"
+        class="ghost-button"
+        round
+        :disabled="!selectedVideo?.id"
+        @click="emit('show-transcript')"
+      >
+        转录文本
       </el-button>
       <div v-if="!advanced" class="knowledge-tools">
         <div class="control-knowledge">

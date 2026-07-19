@@ -435,16 +435,6 @@ function videoStatus(video) {
             @click="ensureAdvancedReport"
           >重新生成</button>
         </div>
-        <div v-if="report?.references?.length" class="research-references">
-          <strong>参考来源</strong>
-          <a
-            v-for="(reference, index) in report.references"
-            :key="`${reference.url || reference.id || index}`"
-            :href="reference.url || undefined"
-            :target="reference.url ? '_blank' : undefined"
-            :rel="reference.url ? 'noopener noreferrer' : undefined"
-          >{{ referenceTitle(reference, index) }}</a>
-        </div>
       </div>
     </article>
 
@@ -764,16 +754,6 @@ function videoStatus(video) {
   border: 1px solid rgba(255, 255, 255, 0.14);
   text-align: left;
 }
-
-.research-references {
-  display: grid;
-  gap: 7px;
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.research-references a { color: var(--gold); }
 
 .agent-panel {
   display: grid;

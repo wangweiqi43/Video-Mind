@@ -48,6 +48,13 @@ const state = reactive({
   loadingChat: false
 })
 
+const transcriptDialog = reactive({
+  visible: false,
+  loading: false,
+  data: null,
+  error: ''
+})
+
 const activePollTaskId = ref(null)
 const historyListRef = ref(null)
 const sessionRequestId = ref(0)
@@ -76,6 +83,16 @@ const summaryPreview = computed(() => {
   return state.resultLoading ? '正在读取历史摘要...' : '解析成功后，这里会出现 AI 视频摘要。'
 })
 const structuredSummary = computed(() => parseSummary(state.taskResult?.summaryText))
+const transcriptDialogStatus = computed(() => {
+  if (transcriptDialog.loading) return '正在读取最新转录文本...'
+  if (transcriptDialog.error) return transcriptDialog.error
+  if (transcriptDialog.data?.status === 'READY' && transcriptDialog.data?.transcriptionText) return ''
+  const taskStatus = String(state.task?.taskStatus || '').toUpperCase()
+  if (state.task?.analysisMode === 'ADVANCED' && ['PENDING', 'PROCESSING', 'RETRYING'].includes(taskStatus)) {
+    return '视频转录处理中，完成后重新打开即可查看。'
+  }
+  return '尚未生成转录文本，请先点击“生成高级摘要总结”。'
+})
 
 onMounted(async () => {
   await Promise.all([loadVideos(), loadCapabilities()])
@@ -88,6 +105,7 @@ function readInitialMode() {
 }
 
 async function switchMode(mode) {
+  transcriptDialog.visible = false
   state.appMode = mode
   localStorage.setItem('videomind:application-mode', mode)
   const url = new URL(window.location.href)
@@ -132,6 +150,7 @@ async function refreshVideoList() {
 }
 
 async function selectVideo(video) {
+  transcriptDialog.visible = false
   activePollTaskId.value = null
   sessionRequestId.value += 1
   detailRequestId.value += 1
@@ -368,6 +387,27 @@ async function refreshTaskOutcome(taskId, mode = state.task?.analysisMode || 'NO
     return
   }
   await Promise.all([loadTaskResult(taskId), loadVectorStatus(taskId), refreshSelectedVideoMetadata()])
+}
+
+async function openTranscriptDialog() {
+  const videoId = state.selectedVideo?.id
+  if (!videoId) return
+  transcriptDialog.visible = true
+  transcriptDialog.loading = true
+  transcriptDialog.data = null
+  transcriptDialog.error = ''
+  try {
+    const data = await api.getVideoTranscription(videoId)
+    if (transcriptDialog.visible && state.selectedVideo?.id === videoId) {
+      transcriptDialog.data = data
+    }
+  } catch (error) {
+    if (transcriptDialog.visible && state.selectedVideo?.id === videoId) {
+      transcriptDialog.error = error.message || '转录文本读取失败'
+    }
+  } finally {
+    if (state.selectedVideo?.id === videoId) transcriptDialog.loading = false
+  }
 }
 
 async function refreshSelectedVideoMetadata() {
@@ -877,6 +917,7 @@ function compactParagraphs(lines) {
           @upload="handleUpload"
           @analyze="createAnalyzeTask"
           @play="playCurrentVideo"
+          @show-transcript="openTranscriptDialog"
           @toggle-auto-vectorize="state.autoVectorize = !state.autoVectorize"
           @vectorize="vectorizeCurrentTask"
         />
@@ -1106,10 +1147,29 @@ function compactParagraphs(lines) {
           @upload="handleUpload"
           @analyze="createAnalyzeTask"
           @play="playCurrentVideo"
+          @show-transcript="openTranscriptDialog"
           @toggle-auto-vectorize="state.autoVectorize = !state.autoVectorize"
           @vectorize="vectorizeCurrentTask"
         />
       </template>
     </AdvancedModeLayout>
+
+    <el-dialog
+      v-model="transcriptDialog.visible"
+      class="transcript-dialog"
+      title="转录文本"
+      width="min(760px, 92vw)"
+      destroy-on-close
+    >
+      <div v-if="transcriptDialog.loading" class="transcript-dialog-state">正在读取最新转录文本...</div>
+      <template v-else-if="transcriptDialog.data?.status === 'READY' && transcriptDialog.data?.transcriptionText">
+        <div class="transcript-dialog-meta">
+          <span>版本 {{ transcriptDialog.data.transcriptVersion }}</span>
+          <span v-if="transcriptDialog.data.language">语言 {{ transcriptDialog.data.language }}</span>
+        </div>
+        <pre class="transcript-dialog-text">{{ transcriptDialog.data.transcriptionText }}</pre>
+      </template>
+      <div v-else class="transcript-dialog-state">{{ transcriptDialogStatus }}</div>
+    </el-dialog>
   </main>
 </template>

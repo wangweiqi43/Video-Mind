@@ -8,10 +8,12 @@ import com.videomind.module.video.dto.MultipartUploadInitRequest;
 import com.videomind.module.video.dto.MultipartUploadInitResponse;
 import com.videomind.module.video.dto.MultipartUploadStatusResponse;
 import com.videomind.module.video.dto.VideoDuplicateCheckResponse;
+import com.videomind.module.video.dto.VideoTranscriptionResponse;
 import com.videomind.module.video.dto.VideoUploadResponse;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.MultipartUploadService;
 import com.videomind.module.video.service.VideoFileService;
+import com.videomind.module.video.service.VideoTranscriptionQueryService;
 import jakarta.validation.Valid;
 import java.io.InputStream;
 import java.util.List;
@@ -37,6 +39,7 @@ import org.springframework.util.StringUtils;
 public class VideoController {
 
     private final VideoFileService videoFileService;
+    private final VideoTranscriptionQueryService transcriptionQueryService;
     private final MultipartUploadService multipartUploadService;
     private final ObjectStorageService objectStorageService;
 
@@ -91,6 +94,11 @@ public class VideoController {
     @GetMapping("/{videoId}")
     public ApiResponse<VideoFile> detail(@PathVariable Long videoId) {
         return ApiResponse.success(videoFileService.getVideoDetail(videoId, MockUserContext.currentUserId()));
+    }
+
+    @GetMapping("/{videoId}/transcription")
+    public ApiResponse<VideoTranscriptionResponse> transcription(@PathVariable Long videoId) {
+        return ApiResponse.success(transcriptionQueryService.latest(videoId, MockUserContext.currentUserId()));
     }
 
     @GetMapping("/{videoId}/stream")

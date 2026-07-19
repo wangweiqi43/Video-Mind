@@ -15,6 +15,8 @@ import com.videomind.module.video.service.VideoFileService;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.dao.DuplicateKeyException;
@@ -25,6 +27,9 @@ import org.springframework.util.StringUtils;
 public class AdvancedReportService {
 
     private static final String TASK_TYPE = "RESEARCH";
+    private static final Pattern REFERENCE_SECTION_HEADING = Pattern.compile(
+            "^[ \\t]{0,3}#{1,6}[ \\t]+(?:参考来源|引用来源|转录原文引用|references|sources)[ \\t]*[:：]?[ \\t]*\\r?$",
+            Pattern.CASE_INSENSITIVE | Pattern.MULTILINE | Pattern.UNICODE_CASE);
     public static final String PROFILE = "VIDEOMIND_STUDY_NOTES_V1";
 
     private final AgentClientProperties properties;
@@ -165,12 +170,19 @@ public class AdvancedReportService {
                 .updatedAt(task.getUpdatedAt());
         if (includeReport && isSuccess(task.getStatus()) && StringUtils.hasText(task.getReportId())) {
             JsonNode report = client.researchReport(task.getReportId(), task.getUserId());
-            builder.reportMarkdown(report.path("report").asText(null))
-                    .references(report.get("references"))
+            builder.reportMarkdown(stripReferenceSection(report.path("report").asText(null)))
                     .downloadUrl("/api/videos/" + task.getVideoId() + "/advanced-report/download")
                     .targetLength(report.path("targetLength").asInt(requestInt(task, "targetLength", 1500)));
         }
         return builder.build();
+    }
+
+    static String stripReferenceSection(String markdown) {
+        if (!StringUtils.hasText(markdown)) {
+            return markdown;
+        }
+        Matcher matcher = REFERENCE_SECTION_HEADING.matcher(markdown);
+        return matcher.find() ? markdown.substring(0, matcher.start()).stripTrailing() : markdown;
     }
 
     private VideoAgentTask latest(Long videoId, Long userId, int transcriptVersion) {

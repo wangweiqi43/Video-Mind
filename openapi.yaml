@@ -126,6 +126,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/EmptyApiResponse"
 
+  /api/videos/{videoId}/transcription:
+    get:
+      tags:
+        - Video
+      summary: 查询视频最新转录文本
+      description: 按视频读取当前用户最新的共享 ASR 结果，不触发新的解析任务。
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: 最新转录状态；尚无转录时 status 为 UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoTranscriptionApiResponse"
+
   /api/videos/multipart/init:
     post:
       tags:
@@ -736,6 +752,44 @@ components:
           example: success
         data:
           $ref: "#/components/schemas/VideoFile"
+
+    VideoTranscriptionResponse:
+      type: object
+      properties:
+        videoId:
+          type: integer
+          format: int64
+          example: 12
+        transcriptVersion:
+          type: integer
+          example: 1
+        status:
+          type: string
+          enum: [READY, UNAVAILABLE]
+        language:
+          type: string
+          nullable: true
+          example: zh
+        transcriptionText:
+          type: string
+          nullable: true
+          example: 这是视频的最新转录文本。
+        updatedTime:
+          type: string
+          format: date-time
+          nullable: true
+
+    VideoTranscriptionApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          $ref: "#/components/schemas/VideoTranscriptionResponse"
 
     VideoFileListApiResponse:
       type: object

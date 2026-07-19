@@ -175,7 +175,26 @@ curl http://localhost:8080/api/videos/list
 curl http://localhost:8080/api/videos/12
 ```
 
-### 3.5 删除视频
+### 3.5 查询视频最新转录文本
+
+- Method：`GET`
+- Path：`/api/videos/{videoId}/transcription`
+- 说明：按视频读取当前用户最新的共享 ASR 转录，不依赖普通或高级解析任务 ID，也不会触发新的 ASR、摘要或 Agent 请求。
+
+响应 `data`：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| videoId | number | 视频 ID |
+| transcriptVersion | number | 当前转录版本 |
+| status | string | `READY` 或 `UNAVAILABLE` |
+| language | string/null | ASR 识别语言 |
+| transcriptionText | string/null | 最新转录正文 |
+| updatedTime | string/null | 转录更新时间 |
+
+尚无转录时仍返回 HTTP 200，`status=UNAVAILABLE` 且正文为空。
+
+### 3.6 删除视频
 
 - Method：`DELETE`
 - Path：`/api/videos/{videoId}`

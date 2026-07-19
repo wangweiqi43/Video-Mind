@@ -782,6 +782,40 @@ h3 {
   overflow: hidden;
 }
 
+.transcript-dialog .el-dialog__body {
+  padding-top: 8px;
+}
+
+.transcript-dialog-meta {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.transcript-dialog-text {
+  max-height: 60vh;
+  margin: 0;
+  padding: 18px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.22);
+  font: 14px/1.8 "Aptos", "Microsoft YaHei", sans-serif;
+}
+
+.transcript-dialog-state {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
 .conversation > .messages,
 .conversation > .history-state {
   grid-row: 2;

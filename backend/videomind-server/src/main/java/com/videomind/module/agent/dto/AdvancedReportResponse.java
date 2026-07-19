@@ -1,6 +1,5 @@
 package com.videomind.module.agent.dto;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import java.time.LocalDateTime;
 import lombok.Builder;
 import lombok.Data;
@@ -21,7 +20,6 @@ public class AdvancedReportResponse {
     private String artifactId;
     private String downloadUrl;
     private String reportMarkdown;
-    private JsonNode references;
     private Integer transcriptVersion;
     private Integer targetLength;
     private String outputProfile;

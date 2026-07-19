@@ -56,6 +56,9 @@ export const api = {
   listVideos() {
     return http.get('/videos/list')
   },
+  getVideoTranscription(videoId) {
+    return http.get(`/videos/${videoId}/transcription`)
+  },
   deleteVideo(videoId) {
     return http.delete(`/videos/${videoId}`)
   },
