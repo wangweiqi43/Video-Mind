@@ -31,14 +31,14 @@ public class AgentPresentationService {
             throw new BizException(503, "Agent Platform PPT 生成功能尚未启用");
         }
         VideoFile video = videoFileService.getVideoDetail(videoId, userId);
-        if (video.getAgentKnowledgeBaseId() == null) {
-            throw new BizException(409, "视频尚未完成 Agent Platform 入库，暂时不能生成 PPT");
+        if (video.getAgentReportKnowledgeBaseId() == null) {
+            throw new BizException(409, "视频深度研究报告知识库尚未就绪，暂时不能生成 PPT");
         }
         int version = nextVersion(videoId, userId);
         AgentTaskClient.PresentationOptions options = toOptions(request);
         AgentTaskClient.AgentTaskResult result = taskClient.createPresentation(
                 videoId,
-                video.getAgentKnowledgeBaseId(),
+                video.getAgentReportKnowledgeBaseId(),
                 options,
                 userId,
                 "presentation:video:" + videoId + ":version:" + version,

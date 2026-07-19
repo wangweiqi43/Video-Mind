@@ -23,7 +23,8 @@ public class VideoFile {
     private String minioObjectKey;
     private UploadStatus uploadStatus;
     private Integer durationSeconds;
-    private String agentKnowledgeBaseId;
+    private String agentSourceKnowledgeBaseId;
+    private String agentReportKnowledgeBaseId;
     private Integer transcriptVersion;
     private Integer agentIngestVersion;
     private String agentIngestStatus;

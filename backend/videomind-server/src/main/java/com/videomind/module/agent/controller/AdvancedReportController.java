@@ -17,22 +17,22 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/videos/{videoId}/advanced-report")
+@RequestMapping("/api/videos/{videoId}")
 public class AdvancedReportController {
 
     private final AdvancedReportService service;
 
-    @PostMapping(":ensure")
+    @PostMapping("/advanced-report:ensure")
     public ApiResponse<AdvancedReportResponse> ensure(@PathVariable Long videoId) {
         return ApiResponse.success(service.ensure(videoId, MockUserContext.currentUserId()));
     }
 
-    @GetMapping
+    @GetMapping("/advanced-report")
     public ApiResponse<AdvancedReportResponse> detail(@PathVariable Long videoId) {
         return ApiResponse.success(service.detail(videoId, MockUserContext.currentUserId()));
     }
 
-    @GetMapping("/download")
+    @GetMapping("/advanced-report/download")
     public ResponseEntity<byte[]> download(@PathVariable Long videoId) {
         AdvancedReportResponse report = service.detail(videoId, MockUserContext.currentUserId());
         if (report.getReportMarkdown() == null) {

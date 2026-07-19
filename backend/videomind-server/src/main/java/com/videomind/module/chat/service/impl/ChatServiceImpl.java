@@ -194,12 +194,12 @@ public class ChatServiceImpl implements ChatService {
             try {
                 ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
                 VideoFile video = videoFileService.getVideoDetail(request.getVideoId(), userId);
-                if (!StringUtils.hasText(video.getAgentKnowledgeBaseId())) {
-                    throw new BizException(409, "当前视频尚未同步到 MindAgent，请稍后重试");
+                if (!StringUtils.hasText(video.getAgentReportKnowledgeBaseId())) {
+                    throw new BizException(409, "当前视频的深度研究报告知识库尚未就绪，请稍后重试");
                 }
                 if (!StringUtils.hasText(session.getMindagentConversationId())) {
                     session.setMindagentConversationId(agentChatClient.createConversation(
-                            video.getAgentKnowledgeBaseId(), userId, "conversation:session:" + session.getId(), traceId));
+                            video.getAgentReportKnowledgeBaseId(), userId, "conversation:session:" + session.getId(), traceId));
                     session.setApplicationMode("ADVANCED");
                     chatSessionMapper.updateById(session);
                 }
@@ -383,7 +383,7 @@ public class ChatServiceImpl implements ChatService {
         }
         AgentChatClient.AgentChatRequest agentRequest = new AgentChatClient.AgentChatRequest(
                 video.getId(),
-                video.getAgentKnowledgeBaseId(),
+                video.getAgentReportKnowledgeBaseId(),
                 request.getSessionId(),
                 request.getQuestion(),
                 AnswerScopePolicy.normalize(request.getAnswerScope()),

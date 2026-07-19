@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.videomind.common.enums.UploadStatus;
+import com.videomind.agentclient.AgentTaskClient;
 import com.videomind.common.exception.BizException;
 import com.videomind.config.RateLimitProperties;
 import com.videomind.infrastructure.ratelimit.RateLimitService;
@@ -66,6 +67,7 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
     private final ConversationSummaryMapper conversationSummaryMapper;
     private final ConversationContextService conversationContextService;
     private final VideoAgentTaskMapper videoAgentTaskMapper;
+    private final AgentTaskClient agentTaskClient;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -168,6 +170,10 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
     @Transactional(rollbackFor = Exception.class)
     public void deleteVideo(Long videoId, Long userId) {
         VideoFile videoFile = getVideoDetail(videoId, userId);
+        boolean hasAgentTask=videoAgentTaskMapper.selectCount(Wrappers.<VideoAgentTask>lambdaQuery()
+                .eq(VideoAgentTask::getVideoId,videoId).eq(VideoAgentTask::getUserId,userId))>0;
+        if(hasAgentTask||StringUtils.hasText(videoFile.getAgentSourceKnowledgeBaseId())||StringUtils.hasText(videoFile.getAgentReportKnowledgeBaseId()))
+            agentTaskClient.deleteVideoKnowledge(videoId,userId,null);
         videoAgentTaskMapper.delete(Wrappers.<VideoAgentTask>lambdaQuery()
                 .eq(VideoAgentTask::getVideoId, videoId)
                 .eq(VideoAgentTask::getUserId, userId));

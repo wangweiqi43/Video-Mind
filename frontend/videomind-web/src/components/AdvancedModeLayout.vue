@@ -44,12 +44,13 @@ const reportStatusText = computed(() => {
   if (!props.selectedVideo?.id) return '请先选择一个已完成转录的视频。'
   if (!props.capabilities.advanced_report) return '高级研究报告功能尚未启用。'
   if (reportError.value) return reportError.value
-  if (reportLoading.value && !report.value) return '正在同步视频转录并准备研究任务…'
+  if (reportLoading.value && !report.value) return '正在准备视频深度研究任务…'
   const status = String(report.value?.status || '').toUpperCase()
-  if (status === 'SYNCING' || status === 'READY') return '正在将视频转录同步至 MindAgent…'
+  if (status === 'SYNCING' || status === 'READY') return '正在清洗并建立隐藏的转录研究素材…'
   if (status === 'NOT_STARTED') return '正在创建研究任务…'
   if (['PENDING', 'RUNNING', 'PROCESSING'].includes(status)) {
-    return `研究报告生成中${report.value?.progress != null ? `（${report.value.progress}%）` : ''}…`
+    const stage = report.value?.stage ? ` · ${report.value.stage}` : ''
+    return `研究报告生成并入库中${report.value?.progress != null ? `（${report.value.progress}%）` : ''}${stage}…`
   }
   if (['FAILED', 'CANCELLED'].includes(status)) return report.value?.errorMessage || '研究报告生成失败，可重新尝试。'
   return '正在准备研究报告…'
@@ -61,7 +62,7 @@ const ingestStatusText = computed(() => {
   if (!(Number(props.selectedVideo?.transcriptVersion) > 0)) return '请先使用上方共享操作栏完成 AI 视频总结。'
   if (ingestError.value) return ingestError.value
   if (ingestLoading.value && !ingest.value) return '正在创建转录同步任务…'
-  if (ingestStatus.value === 'SUCCESS') return '当前转录已同步至 MindAgent，高级知识库已就绪。'
+  if (ingestStatus.value === 'SUCCESS') return '转录已完成规则清洗和固定 Token 切分，隐藏研究素材已就绪。'
   if (ingestStatus.value === 'FAILED') return ingest.value?.errorMessage || '转录同步失败，可重新同步。'
   if (ingestStatus.value === 'CANCELLED') return '转录同步已取消，可重新同步。'
   if (['PENDING', 'RUNNING'].includes(ingestStatus.value)) {
@@ -121,12 +122,12 @@ watch(draft, (value) => {
 })
 
 watch(
-  () => [props.active, props.selectedVideo?.id, props.capabilities.advanced_report],
-  ([active, videoId, enabled]) => {
+  () => [props.active, props.selectedVideo?.id, props.capabilities.advanced_report, ingestStatus.value],
+  ([active, videoId, enabled, sourceStatus]) => {
     stopReportPolling()
     report.value = null
     reportError.value = ''
-    if (active && videoId && enabled) ensureAdvancedReport()
+    if (active && videoId && enabled && sourceStatus === 'SUCCESS') ensureAdvancedReport()
   },
   { immediate: true }
 )
@@ -285,6 +286,12 @@ async function ensureAgentReady() {
   if (ingestStatus.value !== 'SUCCESS') await startIngestSync(ingestRequestVersion)
   if (ingestStatus.value !== 'SUCCESS') {
     ElMessage.info('正在将当前视频转录同步到 MindAgent，请稍后重试')
+    return false
+  }
+  const reportStatus = String(report.value?.status || '').toUpperCase()
+  if (!['SUCCESS', 'COMPLETED'].includes(reportStatus) || !report.value?.reportKnowledgeBaseId) {
+    await ensureAdvancedReport()
+    ElMessage.info('正在生成深度研究报告并建立正式知识库，请稍后重试')
     return false
   }
   return true
@@ -475,7 +482,7 @@ function videoStatus(video) {
         <div v-if="!messages.length" class="agent-empty">
           <div class="agent-mark">VM</div>
           <h3>围绕当前视频继续探索</h3>
-          <p>高级模式会把当前视频的知识库上下文交给 Agent，并在这里展示流式回答与引用来源。</p>
+          <p>高级模式优先使用深度研究报告知识库；报告未覆盖细节时，Agent 会回查隐藏的转录原文。</p>
         </div>
 
         <section v-if="messages.length" class="advanced-messages" aria-live="polite">

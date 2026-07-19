@@ -17,6 +17,7 @@ public class AdvancedReportResponse {
     private String errorCode;
     private String errorMessage;
     private String reportId;
+    private String reportKnowledgeBaseId;
     private String artifactId;
     private String downloadUrl;
     private String reportMarkdown;

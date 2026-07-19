@@ -75,11 +75,17 @@ public class AgentTaskStateService {
             video.setAgentIngestStatus(incoming);
             if ("SUCCESS".equals(incoming)) {
                 video.setAgentIngestVersion(task.getVersion());
-                video.setAgentKnowledgeBaseId(knowledgeBaseId);
+                video.setAgentSourceKnowledgeBaseId(knowledgeBaseId);
                 video.setAgentLastError(null);
             } else if ("FAILED".equals(incoming) || "CANCELLED".equals(incoming)) {
                 video.setAgentLastError(task.getErrorMessage());
             }
+        } else if ("RESEARCH".equals(task.getTaskType()) && "SUCCESS".equals(incoming)) {
+            String reportKnowledgeBaseId=text(result,"reportKnowledgeBaseId");
+            if(!StringUtils.hasText(task.getReportId())||!StringUtils.hasText(reportKnowledgeBaseId)){
+                task.setStatus("FAILED");task.setStage("FAILED");task.setErrorCode("INVALID_RESPONSE");task.setErrorMessage("Agent Platform 研究成功响应缺少报告或报告知识库 ID");tasks.updateById(task);
+                video.setAgentLastError(task.getErrorMessage());
+            }else{video.setAgentReportKnowledgeBaseId(reportKnowledgeBaseId);video.setAgentLastError(null);}
         } else if ("PRESENTATION".equals(task.getTaskType()) && "SUCCESS".equals(incoming)) {
             video.setLatestPresentationId(task.getArtifactId());
         }

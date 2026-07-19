@@ -65,6 +65,13 @@ public class AgentApiClient {
         }
     }
 
+    public JsonNode delete(String path, AgentRequestContext context) {
+        try {
+            HttpResponse<String> response=sendWithRetry("DELETE",path,null,context,HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            ensureSuccess(response.statusCode(),response.body());return objectMapper.readTree(response.body());
+        } catch(IOException ex){throw new AgentClientException("INVALID_RESPONSE","Agent Platform 返回了无法解析的 JSON",ex,false);}
+    }
+
     public void postSse(String path, Object payload, AgentRequestContext context, Consumer<AgentSseEvent> consumer) {
         String body = serialize(payload);
         HttpResponse<InputStream> response = sendWithRetry(
@@ -141,6 +148,8 @@ public class AgentApiClient {
                 .header("X-Trace-Id", context.traceId());
         if ("GET".equals(method)) {
             builder.GET();
+        } else if ("DELETE".equals(method)) {
+            builder.DELETE();
         } else {
             builder.header("Content-Type", "application/json")
                     .header("Idempotency-Key", context.idempotencyKey())

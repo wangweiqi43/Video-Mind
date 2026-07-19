@@ -37,7 +37,7 @@ class AgentTaskStateServiceTest {
 
         assertThat(video.getAgentIngestStatus()).isEqualTo("SUCCESS");
         assertThat(video.getAgentIngestVersion()).isEqualTo(2);
-        assertThat(video.getAgentKnowledgeBaseId()).isEqualTo("kb-7");
+        assertThat(video.getAgentSourceKnowledgeBaseId()).isEqualTo("kb-7");
         assertThat(video.getSummaryStatus()).isEqualTo("SUCCESS");
         assertThat(video.getSummaryVersion()).isEqualTo(4);
         assertThat(video.getLatestSummaryId()).isEqualTo("normal-summary-4");
@@ -54,6 +54,16 @@ class AgentTaskStateServiceTest {
 
         verify(tasks, never()).updateById(task);
         verify(videos, never()).updateById(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void researchSuccessPublishesTheFormalReportKnowledgeBase() throws Exception {
+        VideoAgentTask task=task("RUNNING");task.setTaskType("RESEARCH");VideoFile video=new VideoFile();video.setId(7L);video.setUserId(9L);video.setAgentSourceKnowledgeBaseId("source-kb");
+        when(videos.getVideoDetail(7L,9L)).thenReturn(video);
+        service.applySnapshot(task,new AgentTaskClient.AgentTaskSnapshot("research-1","SUCCESS","COMPLETED",100,null,null,null,
+                new ObjectMapper().readTree("{\"reportId\":\"report-1\",\"artifactId\":\"artifact-1\",\"reportKnowledgeBaseId\":\"report-kb\",\"reportDocumentId\":\"report-doc\"}")));
+        assertThat(task.getReportId()).isEqualTo("report-1");assertThat(video.getAgentReportKnowledgeBaseId()).isEqualTo("report-kb");
+        assertThat(video.getAgentSourceKnowledgeBaseId()).isEqualTo("source-kb");verify(videos).updateById(video);
     }
 
     private VideoAgentTask task(String status) {

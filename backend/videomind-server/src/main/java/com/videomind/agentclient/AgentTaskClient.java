@@ -61,13 +61,18 @@ public class AgentTaskClient {
     }
 
     public AgentTaskResult createResearch(Long videoId, String knowledgeBaseId, String question,
-                                          boolean webSearch, int targetLength, Long userId,
+                                          boolean webSearch, int targetLength, int transcriptVersion,String sourceTitle,Long userId,
                                           String idempotencyKey, String traceId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("question", question);
         payload.put("knowledgeBaseIds", java.util.List.of(knowledgeBaseId));
         payload.put("webSearch", webSearch);
         payload.put("targetLength", targetLength);
+        payload.put("deepThinking", true);
+        payload.put("sourceVideoId", videoId);
+        payload.put("sourceVersion", transcriptVersion);
+        payload.put("sourceTitle", sourceTitle);
+        payload.put("publishReportKnowledgeBase", true);
         JsonNode response = apiClient.post("/v1/research", payload,
                 AgentRequestContext.of(properties.getTenantId(), userId, idempotencyKey, traceId));
         return taskResult(response);
@@ -77,6 +82,8 @@ public class AgentTaskClient {
         return apiClient.get("/v1/research/" + reportId,
                 AgentRequestContext.of(properties.getTenantId(), userId, null, null));
     }
+
+    public void deleteVideoKnowledge(Long videoId,Long userId,String traceId){apiClient.delete("/v1/integrations/videomind/videos/"+videoId,AgentRequestContext.of(properties.getTenantId(),userId,null,traceId));}
 
     private AgentTaskResult taskResult(JsonNode response) {
         String taskId = response.path("taskId").asText();

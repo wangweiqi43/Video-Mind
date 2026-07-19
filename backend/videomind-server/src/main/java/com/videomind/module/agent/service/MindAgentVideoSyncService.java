@@ -77,7 +77,7 @@ public class MindAgentVideoSyncService {
             VideoAgentTask latest = latest(videoId, userId, version);
             if (latest != null && "SUCCESS".equalsIgnoreCase(latest.getStatus())
                     && Integer.valueOf(version).equals(video.getAgentIngestVersion())
-                    && StringUtils.hasText(video.getAgentKnowledgeBaseId())) {
+                    && StringUtils.hasText(video.getAgentSourceKnowledgeBaseId())) {
                 return response(video, latest);
             }
             if (latest != null && !stateService.isTerminal(latest.getStatus())) {
@@ -189,11 +189,11 @@ public class MindAgentVideoSyncService {
         video.setAgentUpdatedAt(LocalDateTime.now());
         if ("SUCCESS".equals(task.getStatus())) {
             video.setAgentIngestVersion(task.getVersion());
-            video.setAgentKnowledgeBaseId(knowledgeBaseId);
+            video.setAgentSourceKnowledgeBaseId(knowledgeBaseId);
             video.setAgentLastError(null);
         } else {
             video.setAgentIngestVersion(0);
-            video.setAgentKnowledgeBaseId(null);
+            video.setAgentSourceKnowledgeBaseId(null);
             video.setAgentLastError(task.getErrorMessage());
         }
         videos.updateById(video);
@@ -242,7 +242,8 @@ public class MindAgentVideoSyncService {
                 .status(task.getStatus())
                 .stage(task.getStage())
                 .progress(task.getProgress())
-                .knowledgeBaseId(success ? video.getAgentKnowledgeBaseId() : null)
+                .knowledgeBaseId(success ? video.getAgentSourceKnowledgeBaseId() : null)
+                .sourceKnowledgeBaseId(success ? video.getAgentSourceKnowledgeBaseId() : null)
                 .errorCode(task.getErrorCode())
                 .errorMessage(task.getErrorMessage())
                 .build();

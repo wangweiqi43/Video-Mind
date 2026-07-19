@@ -43,7 +43,7 @@ public class AdvancedReportService {
         }
 
         if (!"SUCCESS".equalsIgnoreCase(video.getAgentIngestStatus())
-                || !StringUtils.hasText(video.getAgentKnowledgeBaseId())) {
+                || !StringUtils.hasText(video.getAgentSourceKnowledgeBaseId())) {
             AgentVideoSyncResponse sync = syncService.sync(videoId, userId);
             String status = sync.getStatus();
             return AdvancedReportResponse.builder()
@@ -62,10 +62,12 @@ public class AdvancedReportService {
                 + "》的完整转录内容，生成研究级报告，提炼核心发现、证据、分歧与局限，并给出结论和建议。";
         AgentTaskClient.AgentTaskResult result = client.createResearch(
                 videoId,
-                video.getAgentKnowledgeBaseId(),
+                video.getAgentSourceKnowledgeBaseId(),
                 question,
-                true,
+                false,
                 targetLength,
+                transcriptVersion,
+                safeTitle(video.getOriginalFilename()),
                 userId,
                 "advanced-report:video:" + videoId + ":transcript:" + transcriptVersion + ":attempt:" + attempt,
                 null
@@ -84,7 +86,7 @@ public class AdvancedReportService {
                 "attempt", attempt,
                 "targetLength", targetLength,
                 "transcriptVersion", transcriptVersion,
-                "webSearch", true
+                "webSearch", false
         )));
         task.setCreatedAt(LocalDateTime.now());
         task.setUpdatedAt(LocalDateTime.now());
@@ -123,10 +125,11 @@ public class AdvancedReportService {
                 .agentTaskId(task.getAgentTaskId())
                 .status(task.getStatus())
                 .progress(task.getProgress())
-                .stage(stage(task.getStatus()))
+                .stage(StringUtils.hasText(task.getStage()) ? task.getStage() : stage(task.getStatus()))
                 .errorCode(task.getErrorCode())
                 .errorMessage(task.getErrorMessage())
                 .reportId(task.getReportId())
+                .reportKnowledgeBaseId(videos.getVideoDetail(task.getVideoId(), task.getUserId()).getAgentReportKnowledgeBaseId())
                 .artifactId(task.getArtifactId())
                 .downloadUrl(StringUtils.hasText(task.getReportId())
                         ? "/api/videos/" + task.getVideoId() + "/advanced-report/download"

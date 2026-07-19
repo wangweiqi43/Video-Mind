@@ -27,7 +27,7 @@ public class AgentTaskCoordinator {
     public void pollIngestTasks() {
         if (!properties.isEnabled() || !properties.isIngestEnabled()) return;
         List<VideoAgentTask> running = tasks.selectList(new LambdaQueryWrapper<VideoAgentTask>()
-                .eq(VideoAgentTask::getTaskType, "INGEST")
+                .in(VideoAgentTask::getTaskType, "INGEST", "RESEARCH")
                 .in(VideoAgentTask::getStatus, "PENDING", "RUNNING")
                 .orderByAsc(VideoAgentTask::getUpdatedAt)
                 .last("LIMIT 50"));

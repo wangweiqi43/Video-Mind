@@ -14,6 +14,7 @@ public class AgentVideoSyncResponse {
     private String stage;
     private Integer progress;
     private String knowledgeBaseId;
+    private String sourceKnowledgeBaseId;
     private String errorCode;
     private String errorMessage;
 }

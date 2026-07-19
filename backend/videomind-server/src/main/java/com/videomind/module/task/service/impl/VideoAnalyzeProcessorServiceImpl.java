@@ -187,7 +187,8 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
         if (isNewTranscription) {
             videoFile.setAgentIngestVersion(0);
             videoFile.setAgentIngestStatus("UNSYNCED");
-            videoFile.setAgentKnowledgeBaseId(null);
+            videoFile.setAgentSourceKnowledgeBaseId(null);
+            videoFile.setAgentReportKnowledgeBaseId(null);
             videoFile.setAgentLastError(null);
         }
         videoFile.setAgentUpdatedAt(LocalDateTime.now());

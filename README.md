@@ -6,7 +6,7 @@ VideoMind 是一个本地可运行的 AI 视频内容理解平台。当前仓库
 
 当前也已补充 Vue 3 前端工作台，支持视频上传、AI 总结、知识库向量化和智能助手对话。
 
-项目现已加入可灰度启用的 Agent Platform 迁移层：ASR 后可将转录文本的短期预签名地址提交给 Agent Platform，高级模式聊天可切换为 Agent SSE，且支持 Webhook 回写摘要/索引/PPT 状态。普通模式继续使用原有 RAG 链路。联网搜索是高级模式的单次请求能力，由 Agent Platform 执行，VideoMind 只透传开关并接收回答与 Web 引用。
+项目现已加入 Agent Platform 高级模式：VideoMind 只向 MindAgent 提交 UTF-8 转录 TXT；MindAgent 完成规则清洗、固定 Token 切分、深度研究和报告知识库发布。高级问答优先使用研究报告，必要时回查隐藏转录原文；普通模式继续使用原有 RAG 链路。
 
 ## 已完成内容
 
@@ -212,9 +212,9 @@ curl -X POST http://localhost:8080/api/videos/multipart/<uploadId>/complete
 
 ## 阶段边界
 
-普通模式的 ASR、摘要和本地知识库完全由 VideoMind 执行，不调用 MindAgent。只有用户进入高级模式且当前视频已有转录时，VideoMind 才幂等同步该转录到 MindAgent；Agent 入库过程生成的摘要只保留在 MindAgent 内部，不会回填或覆盖普通模式摘要。
+普通模式的 ASR、摘要和本地知识库完全由 VideoMind 执行，不调用 MindAgent。只有用户进入高级模式且当前视频已有转录时，VideoMind 才幂等同步该转录；不会传输视频、音频或普通摘要。
 
-阶段 2 只开放 `agent_ingest`。高级聊天、研究报告、联网搜索和 PPT 仍由各自能力开关控制，默认关闭。入库任务由 Webhook 与每 5 秒后台轮询共同推进；失败任务点击“重新同步”后调用 MindAgent retry 接口创建新任务映射。
+MindAgent 为每个视频维护隐藏的转录素材库和可见的研究报告库。转录使用规则清洗与 `600 token / 80 token` 重叠切分；研究报告使用 Markdown 标题语义切分。高级聊天和 PPT 只使用正式报告库，报告覆盖不足时由 MindAgent 回查转录素材。自动研究默认不开启联网搜索。
 
 ## Docker 注意事项
 
