@@ -23,6 +23,11 @@ const report = ref(null)
 const reportLoading = ref(false)
 const reportError = ref('')
 let reportTimer = null
+const ingest = ref(null)
+const ingestLoading = ref(false)
+const ingestError = ref('')
+let ingestTimer = null
+let ingestRequestVersion = 0
 
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: false })
 const defaultLinkOpen = markdown.renderer.rules.link_open
@@ -48,6 +53,23 @@ const reportStatusText = computed(() => {
   }
   if (['FAILED', 'CANCELLED'].includes(status)) return report.value?.errorMessage || '研究报告生成失败，可重新尝试。'
   return '正在准备研究报告…'
+})
+const ingestStatus = computed(() => String(ingest.value?.status || 'UNSYNCED').toUpperCase())
+const ingestStatusText = computed(() => {
+  if (!props.selectedVideo?.id) return '请选择视频后同步转录。'
+  if (!props.capabilities.agent_ingest) return 'Agent Platform 已接入，转录同步能力当前关闭。'
+  if (!(Number(props.selectedVideo?.transcriptVersion) > 0)) return '请先使用上方共享操作栏完成 AI 视频总结。'
+  if (ingestError.value) return ingestError.value
+  if (ingestLoading.value && !ingest.value) return '正在创建转录同步任务…'
+  if (ingestStatus.value === 'SUCCESS') return '当前转录已同步至 MindAgent，高级知识库已就绪。'
+  if (ingestStatus.value === 'FAILED') return ingest.value?.errorMessage || '转录同步失败，可重新同步。'
+  if (ingestStatus.value === 'CANCELLED') return '转录同步已取消，可重新同步。'
+  if (['PENDING', 'RUNNING'].includes(ingestStatus.value)) {
+    const stage = ingest.value?.stage ? ` · ${ingest.value.stage}` : ''
+    const progress = ingest.value?.progress != null ? ` · ${ingest.value.progress}%` : ''
+    return `正在同步视频转录${stage}${progress}`
+  }
+  return '进入高级模式后会自动同步当前转录。'
 })
 const canSend = computed(() => Boolean(
   props.capabilities.advanced_chat
@@ -109,7 +131,66 @@ watch(
   { immediate: true }
 )
 
-onBeforeUnmount(stopReportPolling)
+watch(
+  () => [props.active, props.selectedVideo?.id, props.selectedVideo?.transcriptVersion, props.capabilities.agent_ingest],
+  ([active, videoId, transcriptVersion, enabled]) => {
+    stopIngestPolling()
+    ingestRequestVersion += 1
+    ingest.value = null
+    ingestError.value = ''
+    if (active && videoId && Number(transcriptVersion) > 0 && enabled) startIngestSync(ingestRequestVersion)
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  stopReportPolling()
+  stopIngestPolling()
+})
+
+async function startIngestSync(requestVersion = ingestRequestVersion) {
+  if (!props.active || !props.selectedVideo?.id || !props.capabilities.agent_ingest
+      || !(Number(props.selectedVideo?.transcriptVersion) > 0)) return
+  ingestLoading.value = true
+  ingestError.value = ''
+  try {
+    const current = await api.syncMindAgentVideo(props.selectedVideo.id)
+    if (requestVersion !== ingestRequestVersion) return
+    ingest.value = current
+    scheduleIngestPolling(requestVersion)
+  } catch (error) {
+    if (requestVersion === ingestRequestVersion) ingestError.value = error.message || '转录同步启动失败'
+  } finally {
+    if (requestVersion === ingestRequestVersion) ingestLoading.value = false
+  }
+}
+
+async function refreshIngest(requestVersion) {
+  if (requestVersion !== ingestRequestVersion || !props.active || !props.selectedVideo?.id) return
+  try {
+    ingest.value = await api.getMindAgentVideoSync(props.selectedVideo.id)
+    scheduleIngestPolling(requestVersion)
+  } catch (error) {
+    if (requestVersion === ingestRequestVersion) ingestError.value = error.message || '转录同步状态读取失败'
+  }
+}
+
+function scheduleIngestPolling(requestVersion) {
+  stopIngestPolling()
+  if (requestVersion !== ingestRequestVersion || !props.active
+      || ['SUCCESS', 'FAILED', 'CANCELLED'].includes(ingestStatus.value)) return
+  ingestTimer = window.setTimeout(() => refreshIngest(requestVersion), 2000)
+}
+
+function stopIngestPolling() {
+  if (ingestTimer != null) window.clearTimeout(ingestTimer)
+  ingestTimer = null
+}
+
+function retryIngest() {
+  ingestError.value = ''
+  startIngestSync(ingestRequestVersion)
+}
 
 async function ensureAdvancedReport() {
   if (!props.active || !props.selectedVideo?.id || !props.capabilities.advanced_report) return
@@ -195,10 +276,14 @@ function toggleWebSearch() {
 
 async function ensureAgentReady() {
   if (!props.selectedVideo?.id) { ElMessage.warning('请先选择一个已解析的视频'); return false }
+  if (!(Number(props.selectedVideo?.transcriptVersion) > 0)) {
+    ElMessage.warning('请先使用共享操作栏完成 AI 视频总结')
+    return false
+  }
   const binding = await api.mindAgentBindingStatus()
   if (!binding.bound) { ElMessage.warning('请先点击页面右上角“绑定 MindAgent”并完成账号授权'); return false }
-  const sync = await api.syncMindAgentVideo(props.selectedVideo.id)
-  if (!['SUCCESS', 'COMPLETED'].includes(String(sync.status).toUpperCase())) {
+  if (ingestStatus.value !== 'SUCCESS') await startIngestSync(ingestRequestVersion)
+  if (ingestStatus.value !== 'SUCCESS') {
     ElMessage.info('正在将当前视频转录同步到 MindAgent，请稍后重试')
     return false
   }
@@ -374,9 +459,16 @@ function videoStatus(video) {
 
       <div class="advanced-notice">
         <strong>{{ capabilities.agent_enabled ? 'Agent Platform 已接入' : 'Agent Platform 未连接' }}</strong>
-        <span v-if="capabilities.advanced_chat">高级问答由独立 Agent Platform 执行；研究报告进入高级模式后自动生成或恢复。</span>
-        <span v-else-if="capabilities.agent_enabled">VideoMind 已完成平台连接与账户授权，高级问答等功能将按独立能力开关开放。</span>
+        <span v-if="capabilities.agent_ingest">{{ ingestStatusText }}</span>
+        <span v-else-if="capabilities.advanced_chat">高级问答由独立 Agent Platform 执行；研究报告进入高级模式后自动生成或恢复。</span>
+        <span v-else-if="capabilities.agent_enabled">VideoMind 已完成平台连接，高级问答等功能将按独立能力开关开放。</span>
         <span v-else>完成 Agent Platform 连接配置后，可使用高级知识库问答、研究报告与内容生成能力。</span>
+        <button
+          v-if="capabilities.agent_ingest && (ingestError || ['FAILED', 'CANCELLED'].includes(ingestStatus))"
+          type="button"
+          :disabled="ingestLoading"
+          @click="retryIngest"
+        >重新同步</button>
       </div>
 
       <div class="agent-conversation">
@@ -727,6 +819,16 @@ function videoStatus(video) {
 
 .advanced-notice strong {
   color: var(--gold);
+}
+
+.advanced-notice button {
+  width: max-content;
+  padding: 5px 11px;
+  border: 1px solid rgba(231, 185, 111, 0.35);
+  border-radius: 14px;
+  color: var(--gold);
+  background: rgba(231, 185, 111, 0.08);
+  cursor: pointer;
 }
 
 .agent-conversation {

@@ -157,7 +157,7 @@ MindAgent 尚未启动时保持相关开关为 `false`。启用正式对接时�
 
 ```dotenv
 VIDEOMIND_AGENT_ENABLED=true
-VIDEOMIND_AGENT_INGEST_ENABLED=false
+VIDEOMIND_AGENT_INGEST_ENABLED=true
 VIDEOMIND_AGENT_CHAT_ENABLED=false
 VIDEOMIND_AGENT_WEB_SEARCH_ENABLED=false
 VIDEOMIND_AGENT_ADVANCED_REPORT_ENABLED=false
@@ -168,9 +168,12 @@ AGENT_PLATFORM_OAUTH_CLIENT_ID=videomind
 AGENT_PLATFORM_OAUTH_CLIENT_SECRET=<与 MindAgent 的 VIDEOMIND_CLIENT_SECRET 一致>
 AGENT_PLATFORM_OAUTH_REDIRECT_URI=http://localhost:8080/api/integrations/mindagent/callback
 AGENT_PLATFORM_WEBHOOK_SECRET=<与 MindAgent 的 VIDEOMIND_WEBHOOK_SECRET 一致>
+MINIO_PRESIGN_ENDPOINT=http://host.docker.internal:9000
+AGENT_PRESIGNED_URL_EXPIRY_SECONDS=900
+AGENT_TASK_POLL_INTERVAL_SECONDS=5
 ```
 
-这些值可写入被 Git 忽略的项目根目录 `.env`，`start.ps1` 会自动加载。Agent 主开关开启时，后端会校验 URL、OAuth 和 Webhook 必填配置；任一子能力开启时主开关必须开启，联网搜索还要求高级聊天同时开启。
+这些值可写入被 Git 忽略的项目根目录 `.env`，`start.ps1` 会自动加载。VideoMind 继续通过 `MINIO_ENDPOINT`（默认 `localhost:9000`）读写对象；`MINIO_PRESIGN_ENDPOINT` 专门用于生成 MindAgent 可下载且 Host 签名一致的短期 URL。Agent 主开关开启时，后端会校验 URL、OAuth、Webhook 和入库预签名端点；任一子能力开启时主开关必须开启，联网搜索还要求高级聊天同时开启。
 
 OAuth access/refresh token 仅以加密形式保存在 `mindagent_binding`。access token 将在到期前刷新；MindAgent 轮换 refresh token 后会立即替换本地密文。上游因无效或过期 Bearer JWT 返回 401/403 时只强制刷新并重放一次。刷新令牌永久失效时绑定进入 `REAUTH_REQUIRED`，用户可在右上角重新绑定。`AGENT_PLATFORM_API_KEY` 和 `AGENT_PLATFORM_SIGNING_SECRET` 只保留给旧兼容客户端，不是正式对接的鉴权方式。
 
@@ -209,7 +212,9 @@ curl -X POST http://localhost:8080/api/videos/multipart/<uploadId>/complete
 
 ## 阶段边界
 
-当前已预留真实 ASR、摘要大模型、Embedding 和 Chat API 接入骨架，默认仍以 Mock 模式运行。后续可继续完善前端分片上传页面、生产监控、API 供应商适配和鉴权体系。
+普通模式的 ASR、摘要和本地知识库完全由 VideoMind 执行，不调用 MindAgent。只有用户进入高级模式且当前视频已有转录时，VideoMind 才幂等同步该转录到 MindAgent；Agent 入库过程生成的摘要只保留在 MindAgent 内部，不会回填或覆盖普通模式摘要。
+
+阶段 2 只开放 `agent_ingest`。高级聊天、研究报告、联网搜索和 PPT 仍由各自能力开关控制，默认关闭。入库任务由 Webhook 与每 5 秒后台轮询共同推进；失败任务点击“重新同步”后调用 MindAgent retry 接口创建新任务映射。
 
 ## Docker 注意事项
 

@@ -24,6 +24,7 @@ public class AgentConfigurationValidator implements InitializingBean {
         positive("AGENT_PLATFORM_CONNECT_TIMEOUT_SECONDS", properties.getConnectTimeoutSeconds());
         positive("AGENT_PLATFORM_READ_TIMEOUT_SECONDS", properties.getReadTimeoutSeconds());
         positive("AGENT_PRESIGNED_URL_EXPIRY_SECONDS", properties.getPresignedUrlExpirySeconds());
+        positive("AGENT_TASK_POLL_INTERVAL_SECONDS", properties.getTaskPollIntervalSeconds());
         if (properties.getMaxRetries() < 0) {
             invalid("AGENT_PLATFORM_MAX_RETRIES", "不能小于 0");
         }

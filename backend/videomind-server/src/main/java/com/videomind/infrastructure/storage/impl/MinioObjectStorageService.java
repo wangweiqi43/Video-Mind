@@ -15,18 +15,32 @@ import io.minio.StatObjectArgs;
 import java.io.InputStream;
 import java.time.Duration;
 import io.minio.http.Method;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
-@RequiredArgsConstructor
 public class MinioObjectStorageService implements ObjectStorageService {
 
     private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
     private final MinioClient minioClient;
+    private final MinioClient presignClient;
     private final MinioProperties minioProperties;
+
+    public MinioObjectStorageService(MinioClient minioClient, MinioProperties minioProperties) {
+        this.minioClient = minioClient;
+        this.minioProperties = minioProperties;
+        String presignEndpoint = StringUtils.hasText(minioProperties.getPresignEndpoint())
+                ? minioProperties.getPresignEndpoint()
+                : minioProperties.getEndpoint();
+        this.presignClient = MinioClient.builder()
+                .endpoint(presignEndpoint)
+                .credentials(minioProperties.getAccessKey(), minioProperties.getSecretKey())
+                // MinIO defaults to us-east-1. Pinning it keeps pre-signing local and avoids
+                // probing the Docker-only public endpoint from the Windows host.
+                .region("us-east-1")
+                .build();
+    }
 
     @Override
     public StoredObject putObject(String objectKey, InputStream inputStream, long size, String contentType) {
@@ -97,14 +111,14 @@ public class MinioObjectStorageService implements ObjectStorageService {
         }
         try {
             int seconds = Math.toIntExact(Math.max(1, Math.min(expiry.toSeconds(), 604800)));
-            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return presignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(bucket)
                     .object(objectKey)
                     .expiry(seconds)
                     .build());
         } catch (Exception ex) {
-            throw new BizException(500, "生成 MinIO 短期访问地址失败：" + ex.getMessage());
+            throw new BizException(500, "生成 MinIO 短期访问地址失败，请稍后重试");
         }
     }
 

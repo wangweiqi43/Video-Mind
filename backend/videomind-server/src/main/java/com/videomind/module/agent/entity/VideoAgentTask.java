@@ -18,6 +18,7 @@ public class VideoAgentTask {
     private String agentTaskId;
     private String taskType;
     private String status;
+    private String stage;
     private Integer progress;
     private String errorCode;
     private String errorMessage;

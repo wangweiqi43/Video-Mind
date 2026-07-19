@@ -12,6 +12,9 @@ http.interceptors.response.use((response) => {
     return Promise.reject(new Error(payload.message || '请求失败'))
   }
   return payload.data
+}, (error) => {
+  const message = error.response?.data?.message || error.message || '请求失败'
+  return Promise.reject(new Error(message))
 })
 
 export const api = {
@@ -38,6 +41,9 @@ export const api = {
   },
   syncMindAgentVideo(videoId) {
     return http.post(`/integrations/mindagent/videos/${videoId}/sync`)
+  },
+  getMindAgentVideoSync(videoId) {
+    return http.get(`/integrations/mindagent/videos/${videoId}/sync`)
   },
   uploadVideo(file, onUploadProgress) {
     const form = new FormData()

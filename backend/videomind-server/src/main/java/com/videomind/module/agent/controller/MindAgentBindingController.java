@@ -78,4 +78,9 @@ public class MindAgentBindingController {
     ApiResponse<?> sync(@PathVariable Long videoId) {
         return ApiResponse.success(sync.sync(videoId, MockUserContext.currentUserId()));
     }
+
+    @GetMapping("/videos/{videoId}/sync")
+    ApiResponse<?> syncStatus(@PathVariable Long videoId) {
+        return ApiResponse.success(sync.status(videoId, MockUserContext.currentUserId()));
+    }
 }

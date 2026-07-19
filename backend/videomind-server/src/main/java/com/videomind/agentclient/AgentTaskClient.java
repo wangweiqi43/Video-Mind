@@ -43,6 +43,23 @@ public class AgentTaskClient {
         return taskResult(response);
     }
 
+    public AgentTaskSnapshot task(String taskId, Long userId, String traceId) {
+        JsonNode response = apiClient.get(
+                "/v1/tasks/" + taskId,
+                AgentRequestContext.of(properties.getTenantId(), userId, null, traceId)
+        );
+        return taskSnapshot(response);
+    }
+
+    public AgentTaskResult retry(String taskId, Long userId, String idempotencyKey, String traceId) {
+        JsonNode response = apiClient.post(
+                "/v1/tasks/" + taskId + ":retry",
+                Map.of(),
+                AgentRequestContext.of(properties.getTenantId(), userId, idempotencyKey, traceId)
+        );
+        return taskResult(response);
+    }
+
     public AgentTaskResult createResearch(Long videoId, String knowledgeBaseId, String question,
                                           boolean webSearch, int targetLength, Long userId,
                                           String idempotencyKey, String traceId) {
@@ -72,6 +89,24 @@ public class AgentTaskClient {
                 response.path("knowledgeBaseId").asText(null),
                 response.path("artifactId").asText(null),
                 response.path("downloadUrl").asText(null)
+        );
+    }
+
+    private AgentTaskSnapshot taskSnapshot(JsonNode response) {
+        String taskId = response.path("taskId").asText();
+        if (!StringUtils.hasText(taskId)) {
+            throw new AgentClientException("INVALID_RESPONSE", 502, "Agent Platform 任务响应缺少 taskId", false);
+        }
+        JsonNode result = response.path("result");
+        return new AgentTaskSnapshot(
+                taskId,
+                response.path("status").asText("PENDING"),
+                response.path("stage").asText(null),
+                response.path("progress").asInt(0),
+                response.path("errorCode").asText(null),
+                response.path("errorMessage").asText(null),
+                result.path("knowledgeBaseId").asText(null),
+                result
         );
     }
 
@@ -105,6 +140,18 @@ public class AgentTaskClient {
             String knowledgeBaseId,
             String artifactId,
             String downloadUrl
+    ) {
+    }
+
+    public record AgentTaskSnapshot(
+            String taskId,
+            String status,
+            String stage,
+            Integer progress,
+            String errorCode,
+            String errorMessage,
+            String knowledgeBaseId,
+            JsonNode result
     ) {
     }
 }

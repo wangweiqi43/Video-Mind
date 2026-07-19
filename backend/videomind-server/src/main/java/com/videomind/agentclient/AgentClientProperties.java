@@ -27,4 +27,5 @@ public class AgentClientProperties {
     private int readTimeoutSeconds = 180;
     private int maxRetries = 2;
     private int presignedUrlExpirySeconds = 900;
+    private int taskPollIntervalSeconds = 5;
 }

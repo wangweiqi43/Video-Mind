@@ -15,6 +15,7 @@ const state = reactive({
     knowledge_extended: true,
     advanced_mode: true,
     agent_enabled: false,
+    agent_ingest: false,
     advanced_chat: false,
     web_search: false,
     advanced_report: false,
@@ -344,7 +345,15 @@ async function pollTask(taskId) {
 }
 
 async function refreshTaskOutcome(taskId) {
-  await Promise.all([loadTaskResult(taskId), loadVectorStatus(taskId)])
+  await Promise.all([loadTaskResult(taskId), loadVectorStatus(taskId), refreshSelectedVideoMetadata()])
+}
+
+async function refreshSelectedVideoMetadata() {
+  const selectedId = state.selectedVideo?.id
+  if (!selectedId) return
+  state.videos = await api.listVideos()
+  const refreshed = state.videos.find((video) => video.id === selectedId)
+  if (refreshed) state.selectedVideo = refreshed
 }
 
 async function loadTaskResult(taskId = state.task?.id) {

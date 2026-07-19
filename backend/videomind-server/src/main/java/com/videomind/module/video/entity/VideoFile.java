@@ -25,6 +25,7 @@ public class VideoFile {
     private Integer durationSeconds;
     private String agentKnowledgeBaseId;
     private Integer transcriptVersion;
+    private Integer agentIngestVersion;
     private String agentIngestStatus;
     private String summaryStatus;
     private Integer summaryVersion;

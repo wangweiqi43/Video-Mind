@@ -23,6 +23,7 @@ public class SystemCapabilitiesController {
                 .knowledgeExtended(true)
                 .advancedMode(true)
                 .agentEnabled(agentEnabled)
+                .agentIngest(agentEnabled && properties.isIngestEnabled())
                 .advancedChat(agentEnabled && properties.isChatEnabled())
                 .webSearch(agentEnabled && properties.isChatEnabled() && properties.isWebSearchEnabled())
                 .advancedReport(agentEnabled && properties.isAdvancedReportEnabled())

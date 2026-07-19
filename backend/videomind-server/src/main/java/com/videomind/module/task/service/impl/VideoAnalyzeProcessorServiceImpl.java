@@ -1,15 +1,8 @@
 package com.videomind.module.task.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.videomind.agentclient.AgentClientProperties;
-import com.videomind.agentclient.AgentTaskClient;
 import com.videomind.common.enums.TaskStatus;
 import com.videomind.common.exception.BizException;
-import com.videomind.infrastructure.storage.ObjectStorageService;
-import com.videomind.infrastructure.storage.dto.StoredObject;
-import com.videomind.module.agent.entity.VideoAgentTask;
-import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
 import com.videomind.module.task.analysis.AudioExtractorClient;
 import com.videomind.module.task.analysis.SpeechToTextClient;
 import com.videomind.module.task.analysis.VideoSummaryClient;
@@ -27,15 +20,10 @@ import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.task.service.VideoAnalyzeProcessorService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.time.LocalDateTime;
-import java.time.Duration;
-import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
@@ -60,11 +48,6 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
     private final AiSummaryResultMapper aiSummaryResultMapper;
     private final KnowledgeService knowledgeService;
     private final RedissonClient redissonClient;
-    private final AgentClientProperties agentProperties;
-    private final AgentTaskClient agentTaskClient;
-    private final VideoAgentTaskMapper videoAgentTaskMapper;
-    private final ObjectStorageService objectStorageService;
-    private final ObjectMapper objectMapper;
 
     @Override
     public void process(VideoAnalyzeMessage message) {
@@ -102,21 +85,7 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
             AsrResult asrResult = speechToTextClient.transcribe(audio, videoFile, taskRecord);
             SavedTranscription savedTranscription = saveTranscription(taskRecord, asrResult);
             int transcriptVersion = updateTranscriptVersion(videoFile, savedTranscription.created());
-            if (agentProperties.isEnabled() && agentProperties.isIngestEnabled()) {
-                try {
-                    dispatchAgentIngest(videoFile, taskRecord, savedTranscription.transcription(), transcriptVersion);
-                } catch (Exception ex) {
-                    markAgentFailure(videoFile, ex.getMessage());
-                    if (!agentProperties.isFallbackOnError()) {
-                        throw ex;
-                    }
-                    log.warn("Agent ingest failed, fallback to legacy summary and vectorization, taskId={}",
-                            taskRecord.getId(), ex);
-                    runLegacyPostAsr(videoFile, taskRecord, asrResult);
-                }
-            } else {
-                runLegacyPostAsr(videoFile, taskRecord, asrResult);
-            }
+            runLegacyPostAsr(videoFile, taskRecord, asrResult);
             taskRecordService.markSuccess(message.getTaskId(), message.getUserId());
             log.info("Video analyze task completed, taskId={}", message.getTaskId());
         } catch (Exception ex) {
@@ -215,77 +184,15 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
         int current = videoFile.getTranscriptVersion() == null ? 0 : videoFile.getTranscriptVersion();
         int version = isNewTranscription ? current + 1 : Math.max(1, current);
         videoFile.setTranscriptVersion(version);
+        if (isNewTranscription) {
+            videoFile.setAgentIngestVersion(0);
+            videoFile.setAgentIngestStatus("UNSYNCED");
+            videoFile.setAgentKnowledgeBaseId(null);
+            videoFile.setAgentLastError(null);
+        }
         videoFile.setAgentUpdatedAt(LocalDateTime.now());
         videoFileService.updateById(videoFile);
         return version;
-    }
-
-    private void dispatchAgentIngest(
-            VideoFile videoFile,
-            TaskRecord taskRecord,
-            VideoTranscription transcription,
-            int transcriptVersion
-    ) {
-        byte[] transcriptBytes = transcription.getTranscriptionText().getBytes(StandardCharsets.UTF_8);
-        String objectKey = "agent-input/video-" + videoFile.getId() + "/transcript-v" + transcriptVersion + ".txt";
-        StoredObject transcriptObject = objectStorageService.putObject(
-                objectKey,
-                new ByteArrayInputStream(transcriptBytes),
-                transcriptBytes.length,
-                "text/plain; charset=utf-8"
-        );
-        Duration expiry = Duration.ofSeconds(agentProperties.getPresignedUrlExpirySeconds());
-        String transcriptUrl = objectStorageService.presignGetUrl(
-                transcriptObject.getBucket(), transcriptObject.getObjectKey(), expiry);
-
-        Map<String, Object> ingestMetadata = new LinkedHashMap<>();
-        ingestMetadata.put("filename", videoFile.getOriginalFilename());
-        ingestMetadata.put("fileMd5", videoFile.getFileMd5());
-        ingestMetadata.put("durationSeconds", videoFile.getDurationSeconds());
-        AgentTaskClient.AgentTaskResult result = agentTaskClient.ingest(
-                new AgentTaskClient.AgentIngestRequest(
-                        videoFile.getId(),
-                        taskRecord.getId(),
-                        transcriptVersion,
-                        transcriptUrl,
-                        transcription.getLanguage(),
-                        ingestMetadata
-                ),
-                taskRecord.getUserId(),
-                "ingest:video:" + videoFile.getId() + ":transcript:" + transcriptVersion,
-                null
-        );
-        VideoAgentTask agentTask = videoAgentTaskMapper.selectOne(new LambdaQueryWrapper<VideoAgentTask>()
-                .eq(VideoAgentTask::getSourceTaskId, taskRecord.getId())
-                .eq(VideoAgentTask::getTaskType, "INGEST")
-                .last("LIMIT 1"));
-        boolean newAgentTask = agentTask == null;
-        if (newAgentTask) {
-            agentTask = new VideoAgentTask();
-            agentTask.setCreatedAt(LocalDateTime.now());
-        }
-        agentTask.setVideoId(videoFile.getId());
-        agentTask.setUserId(taskRecord.getUserId());
-        agentTask.setSourceTaskId(taskRecord.getId());
-        agentTask.setAgentTaskId(result.taskId());
-        agentTask.setTaskType("INGEST");
-        agentTask.setStatus(result.status());
-        agentTask.setProgress(0);
-        agentTask.setVersion(transcriptVersion);
-        agentTask.setRequestJson(toJson(Map.of("transcriptVersion", transcriptVersion, "transcriptObjectKey", objectKey)));
-        agentTask.setUpdatedAt(LocalDateTime.now());
-        if (newAgentTask) {
-            videoAgentTaskMapper.insert(agentTask);
-        } else {
-            videoAgentTaskMapper.updateById(agentTask);
-        }
-
-        videoFile.setAgentKnowledgeBaseId(result.knowledgeBaseId());
-        videoFile.setAgentIngestStatus(result.status());
-        videoFile.setSummaryStatus("PROCESSING");
-        videoFile.setAgentLastError(null);
-        videoFile.setAgentUpdatedAt(LocalDateTime.now());
-        videoFileService.updateById(videoFile);
     }
 
     private void runLegacyPostAsr(VideoFile videoFile, TaskRecord taskRecord, AsrResult asrResult) {
@@ -301,21 +208,6 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
             } catch (Exception ex) {
                 log.error("Auto vectorize failed, taskId={}", taskRecord.getId(), ex);
             }
-        }
-    }
-
-    private void markAgentFailure(VideoFile videoFile, String message) {
-        videoFile.setAgentIngestStatus("FAILED");
-        videoFile.setAgentLastError(message);
-        videoFile.setAgentUpdatedAt(LocalDateTime.now());
-        videoFileService.updateById(videoFile);
-    }
-
-    private String toJson(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (Exception ex) {
-            return null;
         }
     }
 

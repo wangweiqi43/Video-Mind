@@ -57,6 +57,7 @@ videomind:
     frontend-url: ${VIDEOMIND_FRONTEND_URL:http://localhost:5173}
   minio:
     endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    presign-endpoint: ${MINIO_PRESIGN_ENDPOINT:${MINIO_ENDPOINT:http://localhost:9000}}
     access-key: ${MINIO_ACCESS_KEY:minioadmin}
     secret-key: ${MINIO_SECRET_KEY:minioadmin}
     bucket: ${MINIO_BUCKET:videomind-videos}
@@ -137,3 +138,4 @@ videomind:
     read-timeout-seconds: ${AGENT_PLATFORM_READ_TIMEOUT_SECONDS:180}
     max-retries: ${AGENT_PLATFORM_MAX_RETRIES:2}
     presigned-url-expiry-seconds: ${AGENT_PRESIGNED_URL_EXPIRY_SECONDS:900}
+    task-poll-interval-seconds: ${AGENT_TASK_POLL_INTERVAL_SECONDS:5}

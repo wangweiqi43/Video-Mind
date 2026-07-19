@@ -3,6 +3,7 @@ package com.videomind;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @MapperScan({
         "com.videomind.module.video.mapper",
@@ -12,6 +13,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
         "com.videomind.module.agent.mapper"
 })
 @SpringBootApplication
+@EnableScheduling
 public class VideoMindApplication {
 
     public static void main(String[] args) {

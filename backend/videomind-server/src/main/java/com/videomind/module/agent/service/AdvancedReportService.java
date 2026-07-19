@@ -7,6 +7,7 @@ import com.videomind.agentclient.AgentClientProperties;
 import com.videomind.agentclient.AgentTaskClient;
 import com.videomind.common.exception.BizException;
 import com.videomind.module.agent.dto.AdvancedReportResponse;
+import com.videomind.module.agent.dto.AgentVideoSyncResponse;
 import com.videomind.module.agent.entity.VideoAgentTask;
 import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
 import com.videomind.module.video.entity.VideoFile;
@@ -43,8 +44,8 @@ public class AdvancedReportService {
 
         if (!"SUCCESS".equalsIgnoreCase(video.getAgentIngestStatus())
                 || !StringUtils.hasText(video.getAgentKnowledgeBaseId())) {
-            Map<String, Object> sync = syncService.sync(videoId, userId);
-            String status = String.valueOf(sync.getOrDefault("status", "PENDING"));
+            AgentVideoSyncResponse sync = syncService.sync(videoId, userId);
+            String status = sync.getStatus();
             return AdvancedReportResponse.builder()
                     .videoId(videoId)
                     .status(isSuccess(status) ? "READY" : "SYNCING")

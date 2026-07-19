@@ -5,6 +5,8 @@ import com.videomind.common.api.ApiResponse;
 import com.videomind.common.exception.BizException;
 import com.videomind.module.agent.service.AgentWebhookService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -20,15 +22,26 @@ public class AgentWebhookController {
     private final AgentWebhookService service;
 
     @PostMapping("/task")
-    public ApiResponse<Void> task(
+    public ResponseEntity<ApiResponse<Void>> task(
             @RequestHeader("X-Timestamp") String timestamp,
             @RequestHeader("X-Signature") String signature,
             @RequestBody String body
     ) {
         if (!verifier.verify(timestamp, body, signature)) {
-            throw new BizException(401, "Agent Webhook 签名无效或已过期");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(ApiResponse.fail(401, "Agent Webhook 签名无效或已过期"));
         }
-        service.handle(body);
-        return ApiResponse.success(null);
+        try {
+            service.handle(body);
+            return ResponseEntity.ok(ApiResponse.success(null));
+        } catch (BizException failure) {
+            int code = failure.getCode() == null ? 500 : failure.getCode();
+            HttpStatus status = HttpStatus.resolve(code);
+            return ResponseEntity.status(status == null ? HttpStatus.INTERNAL_SERVER_ERROR : status)
+                    .body(ApiResponse.fail(code, failure.getMessage()));
+        } catch (Exception failure) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.fail(500, "Agent Webhook 处理失败"));
+        }
     }
 }
