@@ -35,17 +35,30 @@ public class VideoTimelinePipeline {
                     task.getId(), video.getId());
             return Optional.empty();
         }
-        List<OcrObservation> visuals;
-        try {
-            visuals = ocr.recognize(video, task);
-        } catch (RuntimeException exception) {
-            visuals = List.of();
-            log.warn("Local OCR unavailable; continue with speech-only timeline, taskId={}, videoId={}",
-                    task.getId(), video.getId(), exception);
+        return build(task, video, version, speech, recognize(task, video));
+    }
+
+    public Optional<TimelineKnowledgeIndexer.IndexedTimeline> build(TaskRecord task, VideoFile video,
+                                                                     int version, List<AsrSegment> speech,
+                                                                     List<OcrObservation> visuals) {
+        if (speech.isEmpty()) {
+            log.warn("Skip timeline because ASR has no sentence timestamps, taskId={}, videoId={}",
+                    task.getId(), video.getId());
+            return Optional.empty();
         }
         String title = video.getOriginalFilename() == null ? "VideoMind 视频" : video.getOriginalFilename();
         VideoTimelineMaterializer.MaterializedTimeline timeline = materializer.materialize(task.getId(), video.getId(),
-                task.getUserId(), version, title, speech, visuals);
+                task.getUserId(), version, title, speech, visuals == null ? List.of() : visuals);
         return Optional.of(indexer.index(task.getUserId(), video.getId(), title, version, timeline));
+    }
+
+    public List<OcrObservation> recognize(TaskRecord task, VideoFile video) {
+        try {
+            return ocr.recognize(video, task);
+        } catch (RuntimeException exception) {
+            log.warn("Local OCR unavailable; continue with speech-only timeline, taskId={}, videoId={}",
+                    task.getId(), video.getId(), exception);
+            return List.of();
+        }
     }
 }

@@ -2,9 +2,11 @@ package com.videomind.module.task.analysis.mock;
 
 import com.videomind.module.task.analysis.SpeechToTextClient;
 import com.videomind.module.task.analysis.dto.AsrResult;
+import com.videomind.module.task.analysis.dto.AsrSegmentResult;
 import com.videomind.module.task.analysis.dto.AudioExtractionResult;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.video.entity.VideoFile;
+import java.util.List;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -24,6 +26,9 @@ public class MockSpeechToTextClient implements SpeechToTextClient {
         return AsrResult.builder()
                 .language("zh-CN")
                 .text(text)
+                .segments(List.of(new AsrSegmentResult(0,
+                        Math.max(1, audio.getDurationSeconds() == null ? 180 : audio.getDurationSeconds()) * 1_000L,
+                        text, 0)))
                 .build();
     }
 }

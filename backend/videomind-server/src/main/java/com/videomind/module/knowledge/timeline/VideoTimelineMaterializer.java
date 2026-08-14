@@ -83,7 +83,7 @@ public class VideoTimelineMaterializer {
             value.setText(source.text());
             value.setConfidence(BigDecimal.valueOf(source.confidence()));
             value.setCreatedTime(now);
-            asrMapper.insertIgnore(value);
+            asrMapper.upsert(value);
         }
         index = 0;
         for (OcrObservation source : visuals == null ? List.<OcrObservation>of() : visuals) {
@@ -97,7 +97,7 @@ public class VideoTimelineMaterializer {
             value.setText(source.text());
             value.setConfidence(BigDecimal.valueOf(source.confidence()));
             value.setCreatedTime(now);
-            ocrMapper.insertIgnore(value);
+            ocrMapper.upsert(value);
         }
     }
 

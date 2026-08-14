@@ -45,7 +45,7 @@ class VideoTimelineMaterializerTest {
         assertThat(result.markdownObjectKey()).isEqualTo("knowledge/video/7/12/timeline/v3/timeline.md");
         assertThat(result.eventJsonObjectKey()).isEqualTo("knowledge/video/7/12/timeline/v3/events.json");
         assertThat(saved.get().getStatus()).isEqualTo("READY");
-        verify(asr).insertIgnore(any(VideoAsrSegment.class));
-        verify(ocr).insertIgnore(any(VideoOcrObservation.class));
+        verify(asr).upsert(any(VideoAsrSegment.class));
+        verify(ocr).upsert(any(VideoOcrObservation.class));
     }
 }
