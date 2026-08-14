@@ -56,13 +56,13 @@ test('disables raw HTML and secures rendered links', () => {
   assert.match(html, /rel="noopener noreferrer"/)
 })
 
-test('restores advanced history messages with references as completed content', () => {
+test('restores local knowledge history with evidence as completed content', () => {
   const messages = normalizeHistoryMessages([{
     role: 'assistant',
     content: '### 核心结论',
     referencesJson: JSON.stringify([
-      { sourceType: 'WEB', title: '网页资料', url: 'https://example.com' },
-      { sourceType: 'RESEARCH_REPORT', title: '高级摘要总结' },
+      { sourceType: 'DOCUMENT', title: '用户文档' },
+      { sourceType: 'VIDEO_TIMELINE', title: '视频时间轴' },
       { sourceType: 'TRANSCRIPT_SOURCE', title: '视频转录原文' }
     ])
   }])
@@ -74,7 +74,7 @@ test('restores advanced history messages with references as completed content', 
   assert.match(renderSafeMarkdown(messages[0].content), /<h3>核心结论<\/h3>/)
 })
 
-test('uses safe fallbacks for legacy advanced session metadata', () => {
+test('uses safe fallbacks for incomplete local session metadata', () => {
   assert.equal(sessionTitle({ title: ' 旧会话 ' }), '旧会话')
   assert.equal(sessionTitle({}), '新会话')
   assert.equal(sessionPreview({ lastMessagePreview: ' 最新回答 ' }), '最新回答')

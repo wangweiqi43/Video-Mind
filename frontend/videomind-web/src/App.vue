@@ -18,7 +18,6 @@ const state = reactive({
   resultView: 'summary',
   task: null,
   taskResult: null,
-  vectorStatus: null,
   sessions: [],
   chatView: 'chat',
   sessionListLoading: false,
@@ -79,20 +78,12 @@ const transcriptDialogStatus = computed(() => {
   if (['PENDING', 'PROCESSING', 'RETRYING', 'CANCEL_REQUESTED'].includes(taskStatus)) {
     return '视频转录处理中，完成后重新打开即可查看。'
   }
-  return '尚未生成转录文本，请先点击“生成高级摘要总结”。'
+  return '尚未生成转录文本，请先启动本地视频解析。'
 })
 
 onMounted(async () => {
   await Promise.all([loadVideos(), loadKnowledgeBases()])
 })
-
-async function loadCapabilities() {
-  try {
-    state.capabilities = await api.getCapabilities()
-  } catch {
-    // 保留本地安全默认值：高级模式可预览，但不会发送任何 Agent 请求。
-  }
-}
 
 async function loadVideos() {
   state.videoListRefreshing = true
@@ -140,15 +131,13 @@ async function loadLatestTaskForVideo(videoId) {
     if (!task) {
       state.task = null
       state.taskResult = null
-      state.vectorStatus = null
       return
     }
     state.task = task
-    await Promise.all([loadTaskResult(task.id), loadVectorStatus(task.id)])
+    await loadTaskResult(task.id)
   } catch (error) {
     state.task = null
     state.taskResult = null
-    state.vectorStatus = null
     ElMessage.warning(error.message || '暂未找到历史解析结果')
   }
 }
@@ -285,7 +274,6 @@ async function createAnalyzeTask() {
       return
     }
     state.taskResult = null
-    state.vectorStatus = null
     if (!task.reused) {
       ElMessage.success({
         message: '解析任务已提交，完成后会自动刷新结果',
@@ -343,7 +331,7 @@ async function pollTask(taskId) {
 }
 
 async function refreshTaskOutcome(taskId) {
-  await Promise.all([loadTaskResult(taskId), loadVectorStatus(taskId), refreshSelectedVideoMetadata()])
+  await Promise.all([loadTaskResult(taskId), refreshSelectedVideoMetadata(), loadKnowledgeBases()])
 }
 
 async function loadKnowledgeBases() {
@@ -437,21 +425,6 @@ async function refreshCurrentTaskResult() {
   }
 }
 
-async function loadVectorStatus(taskId = state.task?.id) {
-  if (!taskId) return
-  state.vectorStatus = await api.vectorStatus(taskId)
-}
-
-async function vectorizeCurrentTask() {
-  if (!state.task?.id) return
-  try {
-    state.vectorStatus = await api.vectorize(state.task.id)
-    ElMessage.success('已加入视频知识库')
-  } catch (error) {
-    ElMessage.error(error.message)
-  }
-}
-
 async function deleteVideo(video) {
   try {
     await ElMessageBox.confirm(
@@ -472,7 +445,6 @@ async function deleteVideo(video) {
       state.selectedVideo = null
       state.task = null
       state.taskResult = null
-      state.vectorStatus = null
       state.activeSessionId = null
       state.messages = []
     }

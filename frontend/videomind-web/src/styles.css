@@ -205,21 +205,6 @@ button {
   margin-right: 4px;
 }
 
-.knowledge-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
-}
-
-.knowledge-dot.vectorized {
-  background: #65d74f;
-  box-shadow:
-    0 0 0 4px rgba(101, 215, 79, 0.12),
-    0 0 18px rgba(101, 215, 79, 0.68);
-}
-
 .control-meta {
   justify-content: flex-end;
   color: var(--muted);
@@ -958,72 +943,6 @@ h3 {
   box-shadow: none;
 }
 
-.presentation-dialog {
-  border: 1px solid rgba(231, 185, 111, 0.24) !important;
-  background: rgba(18, 18, 20, 0.98) !important;
-}
-
-.presentation-dialog .el-dialog__title,
-.presentation-dialog .el-dialog__body {
-  color: var(--text);
-}
-
-.presentation-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.presentation-form label {
-  display: grid;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.presentation-submit {
-  display: flex;
-  justify-content: flex-end;
-  margin: 18px 0;
-}
-
-.presentation-history {
-  display: grid;
-  gap: 8px;
-  max-height: 320px;
-  overflow: auto;
-  padding-top: 15px;
-  border-top: 1px solid var(--line);
-}
-
-.presentation-task {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: center;
-  padding: 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-}
-
-.presentation-task > div:first-child {
-  display: grid;
-  gap: 6px;
-}
-
-.presentation-task span,
-.presentation-task small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.presentation-task .presentation-error {
-  color: #ff9d9d;
-}
-
-.presentation-task-actions {
-  display: flex;
-}
-
 .el-input__wrapper,
 .el-textarea__inner {
   border-radius: 0 !important;
@@ -1138,10 +1057,6 @@ h3 {
   .knowledge-tools .el-button,
   .compact-upload {
     width: 100%;
-  }
-
-  .presentation-form {
-    grid-template-columns: 1fr;
   }
 
   .answer-scope {

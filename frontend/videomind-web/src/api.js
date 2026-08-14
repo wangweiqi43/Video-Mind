@@ -31,21 +31,6 @@ export const api = {
   logout() {
     return http.post('/auth/logout')
   },
-  mindAgentBindingStatus() {
-    return http.get('/integrations/mindagent/status')
-  },
-  authorizeMindAgent() {
-    return http.post('/integrations/mindagent/authorize')
-  },
-  unlinkMindAgent() {
-    return http.delete('/integrations/mindagent/binding')
-  },
-  syncMindAgentVideo(videoId) {
-    return http.post(`/integrations/mindagent/videos/${videoId}/sync`)
-  },
-  getMindAgentVideoSync(videoId) {
-    return http.get(`/integrations/mindagent/videos/${videoId}/sync`)
-  },
   uploadVideo(file, onUploadProgress) {
     const form = new FormData()
     form.append('file', file)
@@ -91,12 +76,6 @@ export const api = {
   getTaskResult(taskId) {
     return http.get(`/tasks/${taskId}/result`)
   },
-  vectorize(taskId) {
-    return http.post(`/knowledge/vectorize/${taskId}`)
-  },
-  vectorStatus(taskId) {
-    return http.get(`/knowledge/status/${taskId}`)
-  },
   createSession(videoId, knowledgeBaseIds = []) {
     return http.post('/chat/session', { videoId, knowledgeBaseIds })
   },
@@ -111,27 +90,6 @@ export const api = {
   },
   listMessages(sessionId, videoId) {
     return http.get(`/chat/session/${sessionId}/messages`, { params: { videoId } })
-  },
-  createPresentation(videoId, payload) {
-    return http.post(`/videos/${videoId}/presentations`, payload)
-  },
-  listPresentations(videoId) {
-    return http.get(`/videos/${videoId}/presentations`)
-  },
-  getPresentation(videoId, taskId) {
-    return http.get(`/videos/${videoId}/presentations/${taskId}`)
-  },
-  retryPresentation(videoId, taskId) {
-    return http.post(`/videos/${videoId}/presentations/${taskId}/retry`)
-  },
-  ensureAdvancedReport(videoId) {
-    return http.post(`/videos/${videoId}/advanced-report:ensure`)
-  },
-  getAdvancedReport(videoId) {
-    return http.get(`/videos/${videoId}/advanced-report`)
-  },
-  getCapabilities() {
-    return http.get('/v1/system/capabilities')
   },
   listKnowledgeBases() {
     return http.get('/knowledge-bases')
