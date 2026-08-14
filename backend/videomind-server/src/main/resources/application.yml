@@ -121,10 +121,20 @@ videomind:
   ai:
     asr:
       mode: ${VIDEOMIND_ASR_MODE:real}
+      provider: ${ASR_PROVIDER:tencent}
       endpoint: ${ASR_API_ENDPOINT:https://api.siliconflow.cn/v1/audio/transcriptions}
       api-key: "${ASR_API_KEY:${SILICONFLOW_API_KEY:}}"
       model: ${ASR_MODEL:TeleAI/TeleSpeechASR}
       timeout-seconds: ${ASR_TIMEOUT_SECONDS:300}
+    tencent-asr:
+      endpoint: ${TENCENT_ASR_ENDPOINT:https://asr.tencentcloudapi.com}
+      secret-id: ${TENCENT_CLOUD_SECRET_ID:}
+      secret-key: ${TENCENT_CLOUD_SECRET_KEY:}
+      region: ${TENCENT_ASR_REGION:ap-shanghai}
+      engine-model-type: ${TENCENT_ASR_ENGINE_MODEL:16k_zh_en_2.0}
+      poll-interval-millis: ${TENCENT_ASR_POLL_INTERVAL_MILLIS:1000}
+      timeout-seconds: ${TENCENT_ASR_TIMEOUT_SECONDS:600}
+      presigned-url-expiry-seconds: ${TENCENT_ASR_URL_EXPIRY_SECONDS:900}
     summary:
       mode: ${VIDEOMIND_SUMMARY_MODE:real}
       endpoint: ${SUMMARY_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}

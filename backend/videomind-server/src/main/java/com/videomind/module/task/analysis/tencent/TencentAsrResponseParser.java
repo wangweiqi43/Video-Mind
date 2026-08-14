@@ -58,6 +58,25 @@ public class TencentAsrResponseParser {
         );
     }
 
+    public long parseCreatedTaskId(String json) {
+        try {
+            JsonNode response = objectMapper.readTree(json).path("Response");
+            JsonNode apiError = response.path("Error");
+            if (!apiError.isMissingNode() && !apiError.isNull()) {
+                String code = apiError.path("Code").asText("UnknownError");
+                String message = apiError.path("Message").asText("未知错误");
+                throw new BizException(502, "腾讯云 ASR 调用失败 [" + code + "]：" + message);
+            }
+            long taskId = response.path("Data").path("TaskId").asLong(0);
+            if (taskId <= 0) {
+                throw new BizException(502, "腾讯云 ASR 创建任务响应缺少有效 TaskId");
+            }
+            return taskId;
+        } catch (IOException exception) {
+            throw new BizException(502, "腾讯云 ASR 返回了无法解析的 JSON");
+        }
+    }
+
     private List<AsrSegmentResult> parseSegments(JsonNode details) {
         if (!details.isArray()) {
             return List.of();

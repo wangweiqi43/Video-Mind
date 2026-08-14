@@ -21,6 +21,7 @@ public class AiProperties {
          * mock: use local placeholder implementation; real: call configured third-party API.
          */
         private String mode = "mock";
+        private String provider = "generic";
         private String endpoint;
         private String apiKey;
         private String model;
