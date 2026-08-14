@@ -73,7 +73,7 @@ videomind:
     dlq-consumer-group:
       video-analyze: ${VIDEO_ANALYZE_DLQ_CONSUMER_GROUP:videomind-video-analyze-dlq-consumer}
     processing-task:
-      lease-seconds: ${PROCESSING_TASK_LEASE_SECONDS:300}
+      lease-seconds: ${PROCESSING_TASK_LEASE_SECONDS:600}
       retry-delay-seconds: ${PROCESSING_TASK_RETRY_DELAY_SECONDS:10}
   ffmpeg:
     mode: ${VIDEOMIND_FFMPEG_MODE:ffmpeg}
