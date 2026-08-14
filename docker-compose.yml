@@ -146,3 +146,31 @@ services:
       timeout: 5s
       start_period: 60s
       retries: 20
+
+  paddleocr:
+    image: videomind-paddleocr:3.7.0-cpu
+    container_name: videomind-paddleocr
+    build:
+      context: ./deploy/paddleocr
+    init: true
+    restart: unless-stopped
+    environment:
+      CUDA_VISIBLE_DEVICES: ""
+      FLAGS_use_mkldnn: "0"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      OCR_DETECTION_MODEL: ${OCR_DETECTION_MODEL:-PP-OCRv5_mobile_det}
+      OCR_RECOGNITION_MODEL: ${OCR_RECOGNITION_MODEL:-PP-OCRv5_mobile_rec}
+      OCR_MAX_UPLOAD_BYTES: ${OCR_MAX_UPLOAD_BYTES:-20971520}
+    ports:
+      - "127.0.0.1:8868:8868"
+    volumes:
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/paddleocr:/data"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8868/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 900s
+      retries: 40
