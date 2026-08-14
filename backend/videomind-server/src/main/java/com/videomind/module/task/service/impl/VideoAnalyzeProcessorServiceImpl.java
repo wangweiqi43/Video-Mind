@@ -15,9 +15,7 @@ import com.videomind.module.task.entity.VideoTranscription;
 import com.videomind.module.task.mapper.AiSummaryResultMapper;
 import com.videomind.module.task.mapper.VideoTranscriptionMapper;
 import com.videomind.module.task.mq.VideoAnalyzeMessage;
-import com.videomind.module.knowledge.service.KnowledgeService;
 import com.videomind.module.knowledge.timeline.VideoTimelinePipeline;
-import com.videomind.module.agent.service.MindAgentVideoSyncService;
 import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.task.service.VideoAnalyzeProcessorService;
 import com.videomind.module.video.entity.VideoFile;
@@ -48,9 +46,7 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
     private final VideoSummaryClient videoSummaryClient;
     private final VideoTranscriptionMapper videoTranscriptionMapper;
     private final AiSummaryResultMapper aiSummaryResultMapper;
-    private final KnowledgeService knowledgeService;
     private final VideoTimelinePipeline videoTimelinePipeline;
-    private final MindAgentVideoSyncService mindAgentVideoSyncService;
     private final RedissonClient redissonClient;
 
     @Override
@@ -61,7 +57,6 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
                     currentTask.getId(), currentTask.getTaskStatus());
             return;
         }
-        String mode = normalizeMode(message.getAnalysisMode());
         RLock lock = redissonClient.getLock("lock:analyze:md5:" + message.getVideoMd5());
         boolean locked = false;
         try {
@@ -88,8 +83,7 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
                         .language(reusableTranscript.getLanguage())
                         .build();
                 savedTranscription = new SavedTranscription(reusableTranscript, false);
-                log.info("Reuse existing transcription, taskId={}, videoId={}, mode={}",
-                        taskRecord.getId(), videoFile.getId(), mode);
+                log.info("Reuse existing transcription, taskId={}, videoId={}", taskRecord.getId(), videoFile.getId());
             } else {
                 AudioExtractionResult audio = audioExtractorClient.extract(videoFile, taskRecord);
                 if (audio.getDurationSeconds() != null && audio.getDurationSeconds() > 0) {
@@ -101,15 +95,8 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
             }
             int transcriptVersion = updateTranscriptVersion(videoFile, savedTranscription.created());
             videoTimelinePipeline.build(taskRecord, videoFile, transcriptVersion, asrResult);
-            if ("ADVANCED".equals(mode)) {
-                mindAgentVideoSyncService.sync(videoFile.getId(), message.getUserId(), taskRecord.getId());
-                log.info("Advanced analysis dispatched to Agent Platform, taskId={}, transcriptVersion={}",
-                        taskRecord.getId(), transcriptVersion);
-                return;
-            }
             runLegacyPostAsr(videoFile, taskRecord, asrResult);
             taskRecordService.markSuccess(message.getTaskId(), message.getUserId());
-            runAutoVectorization(taskRecord);
             log.info("Video analyze task completed, taskId={}", message.getTaskId());
         } catch (Exception ex) {
             if (ex instanceof InterruptedException) {
@@ -233,10 +220,6 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
         return version;
     }
 
-    private String normalizeMode(String mode) {
-        return "ADVANCED".equalsIgnoreCase(mode) ? "ADVANCED" : "NORMAL";
-    }
-
     private void runLegacyPostAsr(VideoFile videoFile, TaskRecord taskRecord, AsrResult asrResult) {
         SummaryResult summaryResult = videoSummaryClient.summarize(asrResult, videoFile, taskRecord);
         saveSummary(taskRecord, summaryResult);
@@ -244,16 +227,6 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
         videoFile.setSummaryVersion(videoFile.getTranscriptVersion());
         videoFile.setAgentUpdatedAt(LocalDateTime.now());
         videoFileService.updateById(videoFile);
-    }
-
-    private void runAutoVectorization(TaskRecord taskRecord) {
-        if (Boolean.TRUE.equals(taskRecord.getAutoVectorize())) {
-            try {
-                knowledgeService.vectorizeTask(taskRecord.getId(), taskRecord.getUserId());
-            } catch (Exception ex) {
-                log.error("Auto vectorize failed, taskId={}", taskRecord.getId(), ex);
-            }
-        }
     }
 
     private record SavedTranscription(VideoTranscription transcription, boolean created) {

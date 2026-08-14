@@ -11,6 +11,5 @@ public class AnalyzeTaskCreateResponse {
     private Long taskId;
     private TaskStatus status;
     private Boolean reused;
-    private String applicationMode;
 }
 

@@ -15,7 +15,5 @@ public class VideoAnalyzeMessage {
     private Long videoId;
     private Long userId;
     private String videoMd5;
-    private Boolean autoVectorize;
-    private String analysisMode;
 }
 

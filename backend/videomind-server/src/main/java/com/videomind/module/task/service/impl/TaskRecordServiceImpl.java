@@ -32,7 +32,7 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRecord> implements TaskRecordService {
 
-    private static final String ADVANCED_PROFILE = "VIDEOMIND_STUDY_NOTES_V1";
+    private static final String LOCAL_MODE = "LOCAL";
 
     private final VideoFileService videoFileService;
     private final AnalyzeTaskMessageProducer analyzeTaskMessageProducer;
@@ -68,22 +68,21 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
             AnalyzeTaskCreateRequest request,
             Long userId,
             VideoFile videoFile) {
-        String mode = normalizeMode(request.getApplicationMode());
         TaskRecord reusedTask = getOne(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
                 .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
-                .eq(TaskRecord::getAnalysisMode, mode)
+                .eq(TaskRecord::getAnalysisMode, LOCAL_MODE)
                 .eq(TaskRecord::getTaskStatus, TaskStatus.SUCCESS)
                 .orderByDesc(TaskRecord::getCreatedTime)
                 .last("LIMIT 1"));
-        if (reusedTask != null && isReusableResult(reusedTask, videoFile, mode)) {
+        if (reusedTask != null && isReusableResult(reusedTask, videoFile)) {
             return buildReusedResponse(reusedTask);
         }
 
         TaskRecord runningTask = getOne(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
                 .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
-                .eq(TaskRecord::getAnalysisMode, mode)
+                .eq(TaskRecord::getAnalysisMode, LOCAL_MODE)
                 .in(TaskRecord::getTaskStatus, List.of(TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.RETRYING))
                 .orderByDesc(TaskRecord::getCreatedTime)
                 .last("LIMIT 1"));
@@ -96,8 +95,8 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         taskRecord.setVideoId(videoFile.getId());
         taskRecord.setVideoMd5(videoFile.getFileMd5());
         taskRecord.setTaskStatus(TaskStatus.PENDING);
-        taskRecord.setAutoVectorize("NORMAL".equals(mode) && Boolean.TRUE.equals(request.getAutoVectorize()));
-        taskRecord.setAnalysisMode(mode);
+        taskRecord.setAutoVectorize(false);
+        taskRecord.setAnalysisMode(LOCAL_MODE);
         taskRecord.setRetryCount(0);
         LocalDateTime now = LocalDateTime.now();
         taskRecord.setCreatedTime(now);
@@ -110,8 +109,6 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
                     .videoId(videoFile.getId())
                     .userId(userId)
                     .videoMd5(videoFile.getFileMd5())
-                    .autoVectorize(taskRecord.getAutoVectorize())
-                    .analysisMode(mode)
                     .build());
         } catch (Exception ex) {
             markFailed(taskRecord.getId(), userId, ex.getMessage());
@@ -122,7 +119,6 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
                 .taskId(taskRecord.getId())
                 .status(taskRecord.getTaskStatus())
                 .reused(false)
-                .applicationMode(mode)
                 .build();
     }
 
@@ -131,17 +127,10 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
                 .taskId(taskRecord.getId())
                 .status(taskRecord.getTaskStatus())
                 .reused(true)
-                .applicationMode(taskRecord.getAnalysisMode())
                 .build();
     }
 
-    private boolean isReusableResult(TaskRecord taskRecord, VideoFile videoFile, String mode) {
-        if ("ADVANCED".equals(mode)) {
-            return "SUCCESS".equalsIgnoreCase(videoFile.getAgentReportStatus())
-                    && videoFile.getTranscriptVersion() != null
-                    && videoFile.getTranscriptVersion().equals(videoFile.getAgentReportVersion())
-                    && ADVANCED_PROFILE.equals(videoFile.getAgentReportProfile());
-        }
+    private boolean isReusableResult(TaskRecord taskRecord, VideoFile videoFile) {
         if (!"SUCCESS".equalsIgnoreCase(videoFile.getSummaryStatus())
                 || videoFile.getTranscriptVersion() == null
                 || !videoFile.getTranscriptVersion().equals(videoFile.getSummaryVersion())) {
@@ -185,24 +174,6 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
                 .orderByDesc(TaskRecord::getCreatedTime)
                 .last("LIMIT 1"));
         return taskRecord;
-    }
-
-    @Override
-    public TaskRecord getLatestSuccessfulTaskByVideo(Long videoId, Long userId, String applicationMode) {
-        VideoFile videoFile = videoFileService.getVideoDetail(videoId, userId);
-        return getOne(new LambdaQueryWrapper<TaskRecord>()
-                .eq(TaskRecord::getUserId, userId)
-                .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
-                .eq(TaskRecord::getAnalysisMode, normalizeMode(applicationMode))
-                .eq(TaskRecord::getTaskStatus, TaskStatus.SUCCESS)
-                .orderByDesc(TaskRecord::getCreatedTime)
-                .last("LIMIT 1"));
-    }
-
-    private String normalizeMode(String value) {
-        if (value == null || value.isBlank() || "NORMAL".equalsIgnoreCase(value)) return "NORMAL";
-        if ("ADVANCED".equalsIgnoreCase(value)) return "ADVANCED";
-        throw new BizException(400, "applicationMode 仅支持 NORMAL 或 ADVANCED");
     }
 
     @Override
