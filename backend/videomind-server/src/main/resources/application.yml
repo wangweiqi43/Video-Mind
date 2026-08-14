@@ -80,6 +80,13 @@ videomind:
     binary-path: ${FFMPEG_BINARY_PATH:ffmpeg}
     probe-binary-path: ${FFPROBE_BINARY_PATH:ffprobe}
     work-dir: ${FFMPEG_WORK_DIR:runtime/ffmpeg}
+  ocr:
+    mode: ${VIDEOMIND_OCR_MODE:local}
+    endpoint: ${LOCAL_OCR_ENDPOINT:http://127.0.0.1:8868/ocr}
+    scene-threshold: ${OCR_SCENE_THRESHOLD:0.30}
+    max-interval-seconds: ${OCR_MAX_INTERVAL_SECONDS:10}
+    max-frames: ${OCR_MAX_FRAMES:300}
+    timeout-seconds: ${OCR_TIMEOUT_SECONDS:60}
   knowledge:
     index-name: ${KNOWLEDGE_INDEX_NAME:idx:videomind_knowledge}
     key-prefix: ${KNOWLEDGE_KEY_PREFIX:knowledge:chunk:}
