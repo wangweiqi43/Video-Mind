@@ -17,7 +17,10 @@ import com.videomind.module.task.mapper.AiSummaryResultMapper;
 import com.videomind.module.task.mapper.TaskRecordMapper;
 import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.entity.ProcessingTask;
+import com.videomind.common.enums.ProcessingTaskState;
 import com.videomind.common.enums.ProcessingTaskType;
+import com.videomind.module.task.analysis.VideoAnalysisVersions;
+import com.videomind.module.task.analysis.VideoKnowledgeReusePolicy;
 import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.mq.TaskDispatchResult;
 import com.videomind.module.task.mq.TransactionalTaskMessageProducer;
@@ -49,6 +52,7 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
     private final ProcessingTaskMapper processingTasks;
     private final ProcessingTaskStateMachine processingState;
     private final TaskRecordProjectionService taskProjection;
+    private final VideoKnowledgeReusePolicy videoKnowledgeReusePolicy;
 
     @Override
     public AnalyzeTaskCreateResponse createAnalyzeTask(AnalyzeTaskCreateRequest request, Long userId) {
@@ -66,7 +70,8 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         }
         TaskCreateCommand command = new TaskCreateCommand(userId, ProcessingTaskType.VIDEO_ANALYSIS,
                 videoFile.getId(), videoFingerprint(userId, videoFile), "START", 5,
-                Map.of("videoMd5", videoFile.getFileMd5(), "timelineVersion", "timeline-fusion-v1"));
+                Map.of("videoMd5", videoFile.getFileMd5(),
+                        "timelineVersion", VideoAnalysisVersions.TIMELINE_SIGNATURE));
         TaskDispatchResult dispatched = taskMessages.dispatch(command);
         TaskRecord taskRecord = getTask(dispatched.businessId(), userId);
         return AnalyzeTaskCreateResponse.builder()
@@ -76,14 +81,14 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
                 .build();
     }
 
-    private String videoFingerprint(Long userId, VideoFile videoFile) {
+    String videoFingerprint(Long userId, VideoFile videoFile) {
         AiProperties.ApiProvider asr = aiProperties.getAsr();
         AiProperties.ApiProvider summary = aiProperties.getSummary();
         String signature = String.join("|", String.valueOf(userId), String.valueOf(videoFile.getId()),
                 safe(videoFile.getFileMd5()), safe(asr.getMode()), safe(asr.getProvider()), safe(asr.getEndpoint()),
                 safe(asr.getModel()), safe(tencentAsrProperties.getRegion()),
                 safe(tencentAsrProperties.getEngineModelType()), safe(summary.getMode()), safe(summary.getModel()),
-                safe(summary.getPromptVersion()), "timeline-fusion-v1");
+                safe(summary.getPromptVersion()), VideoAnalysisVersions.TIMELINE_SIGNATURE);
         return "VIDEO_ANALYSIS:" + userId + ":" + videoFile.getId() + ":" + sha256(signature);
     }
 
@@ -120,16 +125,31 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
             return false;
         }
 
+        ProcessingTask completed = processingTasks.selectOne(new LambdaQueryWrapper<ProcessingTask>()
+                .eq(ProcessingTask::getTaskType, ProcessingTaskType.VIDEO_ANALYSIS)
+                .eq(ProcessingTask::getBusinessId, taskRecord.getId())
+                .eq(ProcessingTask::getState, ProcessingTaskState.SUCCESS)
+                .orderByDesc(ProcessingTask::getCreatedTime)
+                .last("LIMIT 1"));
+        if (completed == null || !videoFingerprint(taskRecord.getUserId(), videoFile)
+                .equals(completed.getBusinessFingerprint())) {
+            return false;
+        }
+
         String summaryMode = aiProperties.getSummary().getMode();
         String modelName = summary.getModelName();
         if ("mock".equalsIgnoreCase(summaryMode)) {
             String promptVersion = aiProperties.getSummary().getPromptVersion();
             String expectedModelName = "mock-summary@" + (StringUtils.hasText(promptVersion) ? promptVersion : "v1");
-            return expectedModelName.equals(modelName);
+            return expectedModelName.equals(modelName) && videoKnowledgeReusePolicy.isReusable(
+                    taskRecord.getUserId(), videoFile.getId(), taskRecord.getId(),
+                    videoFile.getTranscriptVersion());
         }
         if ("real".equalsIgnoreCase(summaryMode)) {
             String expectedModelName = currentSummaryModelSignature();
-            return expectedModelName.equals(modelName);
+            return expectedModelName.equals(modelName) && videoKnowledgeReusePolicy.isReusable(
+                    taskRecord.getUserId(), videoFile.getId(), taskRecord.getId(),
+                    videoFile.getTranscriptVersion());
         }
         return false;
     }

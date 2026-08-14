@@ -19,6 +19,8 @@ import com.videomind.module.task.dto.AnalyzeTaskCreateRequest;
 import com.videomind.module.task.entity.AiSummaryResult;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.entity.ProcessingTask;
+import com.videomind.common.enums.ProcessingTaskState;
+import com.videomind.module.task.analysis.VideoKnowledgeReusePolicy;
 import com.videomind.module.task.mapper.AiSummaryResultMapper;
 import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.mq.TaskCreateCommand;
@@ -45,13 +47,15 @@ class TaskRecordServiceImplTest {
     private final ProcessingTaskMapper processingTasks = mock(ProcessingTaskMapper.class);
     private final ProcessingTaskStateMachine processingState = mock(ProcessingTaskStateMachine.class);
     private final TaskRecordProjectionService projection = mock(TaskRecordProjectionService.class);
+    private final VideoKnowledgeReusePolicy knowledgeReuse = mock(VideoKnowledgeReusePolicy.class);
     private TaskRecordServiceImpl service;
     private VideoFile video;
 
     @BeforeEach
     void setUp() {
         service = spy(new TaskRecordServiceImpl(videos, messages, rateLimit,
-                rateLimitProperties, summaries, ai, tencent, processingTasks, processingState, projection));
+                rateLimitProperties, summaries, ai, tencent, processingTasks, processingState, projection,
+                knowledgeReuse));
         video = new VideoFile();
         video.setId(5L);
         video.setUserId(7L);
@@ -104,12 +108,71 @@ class TaskRecordServiceImplTest {
         ai.getSummary().setPromptVersion("v1");
         doReturn(completed).when(service).getOne(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
         when(summaries.selectOne(any())).thenReturn(summary);
+        ProcessingTask processing = new ProcessingTask();
+        processing.setState(ProcessingTaskState.SUCCESS);
+        processing.setBusinessFingerprint(service.videoFingerprint(7L, video));
+        when(processingTasks.selectOne(any())).thenReturn(processing);
+        when(knowledgeReuse.isReusable(7L, 5L, 10L, 3)).thenReturn(true);
 
         var response = service.createAnalyzeTask(request(), 7L);
 
         assertThat(response.getTaskId()).isEqualTo(10L);
         assertThat(response.getReused()).isTrue();
         verify(messages, never()).dispatch(any());
+    }
+
+    @Test
+    void rebuildsCompletedResultWhenKnowledgeAssetsAreStale() {
+        video.setSummaryStatus("SUCCESS");
+        video.setTranscriptVersion(3);
+        video.setSummaryVersion(3);
+        TaskRecord completed = task(10L, TaskStatus.SUCCESS);
+        TaskRecord rebuilt = task(13L, TaskStatus.PENDING);
+        AiSummaryResult summary = new AiSummaryResult();
+        summary.setModelName("mock-summary@v1");
+        ai.getSummary().setMode("mock");
+        ai.getSummary().setPromptVersion("v1");
+        ProcessingTask processing = new ProcessingTask();
+        processing.setState(ProcessingTaskState.SUCCESS);
+        processing.setBusinessFingerprint(service.videoFingerprint(7L, video));
+        doReturn(completed, rebuilt).when(service)
+                .getOne(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
+        when(summaries.selectOne(any())).thenReturn(summary);
+        when(processingTasks.selectOne(any())).thenReturn(processing);
+        when(messages.dispatch(any())).thenReturn(new TaskDispatchResult("event-rebuild", 101L, 13L, false));
+
+        var response = service.createAnalyzeTask(request(), 7L);
+
+        assertThat(response.getTaskId()).isEqualTo(13L);
+        assertThat(response.getReused()).isFalse();
+        verify(messages).dispatch(any());
+    }
+
+    @Test
+    void rebuildsCompletedResultWhenItsFullProcessingFingerprintIsStale() {
+        video.setSummaryStatus("SUCCESS");
+        video.setTranscriptVersion(3);
+        video.setSummaryVersion(3);
+        TaskRecord completed = task(10L, TaskStatus.SUCCESS);
+        TaskRecord rebuilt = task(14L, TaskStatus.PENDING);
+        AiSummaryResult summary = new AiSummaryResult();
+        summary.setModelName("mock-summary@v1");
+        ai.getSummary().setMode("mock");
+        ai.getSummary().setPromptVersion("v1");
+        ProcessingTask processing = new ProcessingTask();
+        processing.setState(ProcessingTaskState.SUCCESS);
+        processing.setBusinessFingerprint("VIDEO_ANALYSIS:7:5:stale");
+        doReturn(completed, rebuilt).when(service)
+                .getOne(any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
+        when(summaries.selectOne(any())).thenReturn(summary);
+        when(processingTasks.selectOne(any())).thenReturn(processing);
+        when(messages.dispatch(any())).thenReturn(new TaskDispatchResult("event-rebuild", 102L, 14L, false));
+
+        var response = service.createAnalyzeTask(request(), 7L);
+
+        assertThat(response.getTaskId()).isEqualTo(14L);
+        verify(knowledgeReuse, never()).isReusable(any(), any(), any(), any());
+        verify(messages).dispatch(any());
     }
 
     @Test
@@ -154,4 +217,5 @@ class TaskRecordServiceImplTest {
         value.setTaskStatus(status);
         return value;
     }
+
 }

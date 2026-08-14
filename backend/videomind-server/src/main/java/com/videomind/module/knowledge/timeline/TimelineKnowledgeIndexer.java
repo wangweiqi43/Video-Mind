@@ -16,6 +16,7 @@ import com.videomind.module.knowledge.retrieval.KnowledgeIndexGateway;
 import com.videomind.module.knowledge.retrieval.KnowledgeIndexGateway.IndexedChunk;
 import com.videomind.module.knowledge.retrieval.RetrievalCandidate;
 import com.videomind.module.knowledge.service.KnowledgeBaseService;
+import com.videomind.module.task.analysis.VideoAnalysisVersions;
 import com.videomind.module.knowledge.timeline.TimelineFusionService.TimelineEvent;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -136,7 +137,7 @@ public class TimelineKnowledgeIndexer {
         value.setOriginalContentType("text/markdown; charset=utf-8");
         value.setMarkdownBucket(timeline.bucket());
         value.setMarkdownObjectKey(timeline.markdownObjectKey());
-        value.setParser("TIMELINE_FUSION_V1");
+        value.setParser(VideoAnalysisVersions.TIMELINE_PARSER);
         value.setProcessingStage("CHUNKING");
         value.setIndexStatus("PENDING");
         value.setChunkCount(0);
