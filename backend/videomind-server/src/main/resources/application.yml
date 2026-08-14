@@ -104,6 +104,12 @@ videomind:
     password: ${ELASTICSEARCH_PASSWORD:}
     connect-timeout-millis: ${ELASTICSEARCH_CONNECT_TIMEOUT_MILLIS:2000}
     read-timeout-millis: ${ELASTICSEARCH_READ_TIMEOUT_MILLIS:5000}
+  cache-redis:
+    host: ${CACHE_REDIS_HOST:localhost}
+    port: ${CACHE_REDIS_PORT:6382}
+    database: ${CACHE_REDIS_DATABASE:0}
+    password: ${CACHE_REDIS_PASSWORD:}
+    context-ttl-seconds: ${CACHE_CONTEXT_TTL_SECONDS:7200}
   upload:
     chunk-work-dir: ${UPLOAD_CHUNK_WORK_DIR:runtime/uploads}
     bitmap-prefix: ${UPLOAD_BITMAP_PREFIX:upload:bitmap:}
