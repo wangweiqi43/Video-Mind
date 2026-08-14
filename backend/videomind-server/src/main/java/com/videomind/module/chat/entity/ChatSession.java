@@ -20,6 +20,7 @@ public class ChatSession {
     private String applicationMode;
     private String mindagentConversationId;
     private String lastMessagePreview;
+    private String knowledgeBaseIdsJson;
     private LocalDateTime createdTime;
     private LocalDateTime updatedTime;
     @TableLogic

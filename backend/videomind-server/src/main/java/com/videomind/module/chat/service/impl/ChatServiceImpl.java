@@ -2,18 +2,18 @@ package com.videomind.module.chat.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.videomind.agentclient.AgentChatClient;
-import com.videomind.agentclient.AgentClientProperties;
 import com.videomind.common.enums.MessageRole;
 import com.videomind.common.exception.BizException;
+import com.videomind.module.agent.workflow.AgentWorkflowModels;
+import com.videomind.module.agent.workflow.PlannerExecutorCriticWorkflow;
 import com.videomind.module.chat.dto.ChatMessageRequest;
 import com.videomind.module.chat.dto.ChatMessageResponse;
-import com.videomind.module.chat.dto.ConversationContext;
-import com.videomind.module.chat.dto.ConversationTurn;
 import com.videomind.module.chat.dto.ChatSessionCreateResponse;
 import com.videomind.module.chat.dto.ChatSessionResponse;
+import com.videomind.module.chat.dto.ConversationContext;
+import com.videomind.module.chat.dto.HotConversationSnapshot;
 import com.videomind.module.chat.dto.RagReference;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
@@ -23,143 +23,93 @@ import com.videomind.module.chat.mapper.ChatSessionMapper;
 import com.videomind.module.chat.service.ChatService;
 import com.videomind.module.chat.service.ConversationContextService;
 import com.videomind.module.chat.service.ConversationSummaryService;
+import com.videomind.module.chat.service.HotConversationSnapshotService;
 import com.videomind.module.chat.support.ConversationTurnAssembler;
-import com.videomind.module.chat.support.AnswerScopePolicy;
-import com.videomind.module.knowledge.dto.KnowledgeSearchResult;
-import com.videomind.module.knowledge.embedding.EmbeddingClient;
-import com.videomind.module.knowledge.repository.KnowledgeSearchRepository;
+import com.videomind.module.knowledge.retrieval.Evidence;
+import com.videomind.module.knowledge.service.KnowledgeBaseService;
 import com.videomind.module.video.service.VideoFileService;
-import com.videomind.module.video.entity.VideoFile;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import org.slf4j.MDC;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChatServiceImpl implements ChatService {
-
-    private static final int RAG_TOP_K = 5;
-
+    private static final String LOCAL_MODE = "LOCAL";
+    private static final String NEW_SESSION_TITLE = "新会话";
     private final ChatSessionMapper chatSessionMapper;
     private final ChatMessageMapper chatMessageMapper;
-    private final EmbeddingClient embeddingClient;
-    private final KnowledgeSearchRepository knowledgeSearchRepository;
     private final ChatAnswerClient chatAnswerClient;
     private final ConversationContextService conversationContextService;
     private final ConversationSummaryService conversationSummaryService;
     private final ConversationTurnAssembler turnAssembler;
     private final ObjectMapper objectMapper;
     private final VideoFileService videoFileService;
-    private final AgentClientProperties agentProperties;
-    private final AgentChatClient agentChatClient;
+    private final KnowledgeBaseService knowledgeBaseService;
+    private final PlannerExecutorCriticWorkflow workflow;
+    private final HotConversationSnapshotService hotSnapshots;
 
     @Override
-    public ChatSessionCreateResponse createSession(Long videoId, String applicationMode, Long userId) {
+    public ChatSessionCreateResponse createSession(Long videoId, List<Long> selectedKnowledgeBaseIds, Long userId) {
         videoFileService.getVideoDetail(videoId, userId);
+        List<Long> scope = knowledgeBaseService.requireReadyConversationScope(userId, videoId,
+                selectedKnowledgeBaseIds);
         LocalDateTime now = LocalDateTime.now();
         ChatSession session = new ChatSession();
         session.setUserId(userId);
         session.setVideoId(videoId);
-        session.setTitle("新会话");
-        session.setApplicationMode(normalizeApplicationMode(applicationMode));
+        session.setTitle(NEW_SESSION_TITLE);
+        session.setApplicationMode(LOCAL_MODE);
+        session.setKnowledgeBaseIdsJson(json(scope));
         session.setCreatedTime(now);
         session.setUpdatedTime(now);
         chatSessionMapper.insert(session);
-
-        return ChatSessionCreateResponse.builder()
-                .sessionId(session.getId())
-                .videoId(session.getVideoId())
-                .title(session.getTitle())
-                .build();
+        writeHotSnapshot(session, scope, null, 0);
+        return ChatSessionCreateResponse.builder().sessionId(session.getId()).videoId(videoId)
+                .title(session.getTitle()).knowledgeBaseIds(scope).build();
     }
 
     @Override
-    public List<ChatSessionResponse> listSessions(Long videoId, String applicationMode, Long userId) {
+    public List<ChatSessionResponse> listSessions(Long videoId, Long userId) {
         videoFileService.getVideoDetail(videoId, userId);
-        String normalizedMode = normalizeApplicationMode(applicationMode);
         return chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getUserId, userId)
-                .eq(ChatSession::getVideoId, videoId)
-                .eq(ChatSession::getApplicationMode, normalizedMode)
-                .orderByDesc(ChatSession::getUpdatedTime))
-                .stream()
-                .map(session -> toSessionResponse(session, userId))
-                .toList();
+                        .eq(ChatSession::getUserId, userId).eq(ChatSession::getVideoId, videoId)
+                        .orderByDesc(ChatSession::getUpdatedTime)).stream()
+                .map(session -> toSessionResponse(session, userId)).toList();
     }
 
     @Override
     public ChatMessageResponse sendMessage(ChatMessageRequest request, Long userId) {
-        validateWebSearchRequest(request);
-        validateDeepThinkingRequest(request);
-        if (isAgentChatEnabled(request)) {
-            throw new BizException(400, "高级模式必须使用流式消息接口");
-        }
+        rejectUnsupportedTools(request);
         ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
-        validateSessionMode(session, request.getApplicationMode());
-        updateSessionTitle(session, request.getQuestion());
-        LocalDateTime now = LocalDateTime.now();
-
-        ChatMessage userMessage = new ChatMessage();
-        userMessage.setSessionId(request.getSessionId());
-        userMessage.setUserId(userId);
-        userMessage.setRole(MessageRole.USER);
-        userMessage.setContent(request.getQuestion());
-        userMessage.setCreatedTime(now);
-        chatMessageMapper.insert(userMessage);
-
-        ConversationContext context = conversationContextService.getContext(request.getSessionId(), userId);
-        ChatOutcome outcome = answer(request, userId, context);
-        List<RagReference> references = outcome.references();
-        String answer = outcome.answer();
-        String referencesJson = toJson(references);
-
-        ChatMessage assistantMessage = new ChatMessage();
-        assistantMessage.setSessionId(request.getSessionId());
-        assistantMessage.setUserId(userId);
-        assistantMessage.setRole(MessageRole.ASSISTANT);
-        assistantMessage.setContent(answer);
-        assistantMessage.setReferencesJson(referencesJson);
-        assistantMessage.setCreatedTime(now);
-        chatMessageMapper.insert(assistantMessage);
-        conversationSummaryService.compressIfNeeded(session.getId(), userId);
-        conversationContextService.refreshContext(session.getId(), userId);
-        updateSessionUpdatedTime(session);
-
-        return ChatMessageResponse.builder()
-                .messageId(assistantMessage.getId())
-                .answer(assistantMessage.getContent())
-                .references(references)
-                .referencesJson(assistantMessage.getReferencesJson())
-                .createdTime(assistantMessage.getCreatedTime())
-                .build();
+        ConversationContext context = conversationContextService.getContext(session.getId(), userId);
+        insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
+        ChatOutcome outcome = answer(request, userId, session, context);
+        ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
+                outcome.answer(), json(outcome.references()));
+        finishTurn(session, userId, request.getQuestion(), outcome.answer());
+        return response(assistant, outcome.references());
     }
 
     @Override
     public SseEmitter streamMessage(ChatMessageRequest request, Long userId) {
-        validateWebSearchRequest(request);
-        validateDeepThinkingRequest(request);
-        if (isAgentChatEnabled(request)) {
-            return streamAgentOwnedMessage(request, userId);
-        }
+        rejectUnsupportedTools(request);
         SseEmitter emitter = new SseEmitter(0L);
         String traceId = MDC.get("traceId");
         CompletableFuture.runAsync(() -> {
-            if (StringUtils.hasText(traceId)) {
-                MDC.put("traceId", traceId);
-            }
+            if (StringUtils.hasText(traceId)) MDC.put("traceId", traceId);
             try {
-                doStreamMessage(request, userId, emitter);
+                doStream(request, userId, emitter);
             } finally {
                 MDC.remove("traceId");
             }
@@ -169,420 +119,169 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public List<ChatMessage> listMessages(Long sessionId, Long videoId, Long userId) {
-        ChatSession session = getSession(sessionId, videoId, userId);
-        if ("ADVANCED".equalsIgnoreCase(session.getApplicationMode())) {
-            if (!StringUtils.hasText(session.getMindagentConversationId())) {
-                return List.of();
-            }
-            JsonNode nodes = agentChatClient.listMessages(session.getMindagentConversationId(), userId, null);
-            List<ChatMessage> remote = new ArrayList<>();
-            if (nodes.isArray()) {
-                nodes.forEach(node -> {
-                    ChatMessage message = new ChatMessage();
-                    message.setSessionId(sessionId);
-                    message.setUserId(userId);
-                    message.setRole(agentMessageRole(node.path("role").asText("USER")));
-                    message.setContent(node.path("content").asText());
-                    JsonNode refs = node.has("referencesJson") ? node.get("referencesJson") : node.get("references");
-                    message.setReferencesJson(refs == null || refs.isNull() ? null : refs.isTextual() ? refs.asText() : refs.toString());
-                    message.setCreatedTime(agentMessageTime(node));
-                    remote.add(message);
-                });
-            }
-            return remote;
-        }
+        getSession(sessionId, videoId, userId);
         return chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, sessionId)
-                .eq(ChatMessage::getUserId, userId)
+                .eq(ChatMessage::getSessionId, sessionId).eq(ChatMessage::getUserId, userId)
                 .orderByAsc(ChatMessage::getCreatedTime));
     }
 
-    private SseEmitter streamAgentOwnedMessage(ChatMessageRequest request, Long userId) {
-        SseEmitter emitter = new SseEmitter(0L);
-        String traceId = MDC.get("traceId");
-        CompletableFuture.runAsync(() -> {
-            try {
-                ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
-                validateSessionMode(session, "ADVANCED");
-                VideoFile video = videoFileService.getVideoDetail(request.getVideoId(), userId);
-                if (!StringUtils.hasText(video.getAgentReportKnowledgeBaseId())) {
-                    throw new BizException(409, "当前视频的高级摘要总结知识库尚未就绪，请稍后重试");
-                }
-                if (!StringUtils.hasText(session.getMindagentConversationId())) {
-                    session.setMindagentConversationId(agentChatClient.createConversation(
-                            video.getAgentReportKnowledgeBaseId(), userId, "conversation:session:" + session.getId(), traceId));
-                    session.setApplicationMode("ADVANCED");
-                    chatSessionMapper.updateById(session);
-                }
-                AgentChatClient.AgentChatResult result = agentChatClient.chatConversation(
-                        session.getMindagentConversationId(), request.getQuestion(),
-                        new AgentChatClient.AgentToolPolicy(true, Boolean.TRUE.equals(request.getWebSearchEnabled()), false, false),
-                        Boolean.TRUE.equals(request.getDeepThinkingEnabled()),
-                        userId, "chat:session:" + session.getId() + ":" + UUID.randomUUID(), traceId,
-                        delta -> sendEvent(emitter, "delta", Map.of("delta", delta)));
-                updateAdvancedSessionMetadata(session, request.getQuestion(), result.answer());
-                sendEvent(emitter, "done", ChatMessageResponse.builder()
-                        .answer(result.answer()).references(result.references()).referencesJson(toJson(result.references()))
-                        .createdTime(LocalDateTime.now()).build());
-                emitter.complete();
-            } catch (Exception ex) {
-                sendEvent(emitter, "error", ex.getMessage());
-                emitter.complete();
-            }
-        });
-        return emitter;
+    private void doStream(ChatMessageRequest request, Long userId, SseEmitter emitter) {
+        try {
+            ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
+            ConversationContext context = conversationContextService.getContext(session.getId(), userId);
+            insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
+            List<RagReference> references = retrieve(request, userId, session);
+            List<ChatMessage> recent = turnAssembler.toMessages(context.getRecentTurns(), userId);
+            StringBuilder answer = new StringBuilder();
+            chatAnswerClient.streamAnswer(request.getQuestion(), references, recent, summary(context),
+                    request.getAnswerScope(), delta -> {
+                        answer.append(delta);
+                        sendEvent(emitter, "delta", Map.of("delta", delta));
+                    });
+            ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
+                    answer.toString(), json(references));
+            finishTurn(session, userId, request.getQuestion(), answer.toString());
+            sendEvent(emitter, "done", response(assistant, references));
+            emitter.complete();
+        } catch (Exception exception) {
+            sendEvent(emitter, "error", exception.getMessage());
+            emitter.complete();
+        }
+    }
+
+    private ChatOutcome answer(ChatMessageRequest request, Long userId, ChatSession session,
+                               ConversationContext context) {
+        List<RagReference> references = retrieve(request, userId, session);
+        String answer = chatAnswerClient.answer(request.getQuestion(), references,
+                turnAssembler.toMessages(context.getRecentTurns(), userId), summary(context), request.getAnswerScope());
+        return new ChatOutcome(answer, references);
+    }
+
+    private List<RagReference> retrieve(ChatMessageRequest request, Long userId, ChatSession session) {
+        List<Long> scope = sessionScope(session, userId);
+        boolean deep = Boolean.TRUE.equals(request.getDeepThinkingEnabled());
+        AgentWorkflowModels.Result result = workflow.run(new AgentWorkflowModels.Request(userId, scope,
+                request.getQuestion(), deep ? 4 : 2, Duration.ofSeconds(deep ? 45 : 20)));
+        return result.evidence().stream().map(evidence -> reference(evidence, session.getVideoId())).toList();
+    }
+
+    private RagReference reference(Evidence value, Long videoId) {
+        return RagReference.builder().videoId(videoId).chunkIndex(value.chunkIndex()).chunkText(value.content())
+                .score(value.finalScore()).sourceType("KNOWLEDGE_BASE").title(value.title())
+                .startSeconds(value.startMs() == null ? null : Math.toIntExact(value.startMs() / 1_000))
+                .endSeconds(value.endMs() == null ? null : Math.toIntExact(value.endMs() / 1_000)).build();
     }
 
     private ChatSession getSession(Long sessionId, Long videoId, Long userId) {
         videoFileService.getVideoDetail(videoId, userId);
         ChatSession session = chatSessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
-                .eq(ChatSession::getId, sessionId)
-                .eq(ChatSession::getUserId, userId)
+                .eq(ChatSession::getId, sessionId).eq(ChatSession::getUserId, userId)
                 .eq(ChatSession::getVideoId, videoId));
-        if (session == null) {
-            throw new BizException(404, "会话不存在、无权访问或不属于当前视频");
-        }
+        if (session == null) throw new BizException(404, "会话不存在、无权访问或不属于当前视频");
         return session;
     }
 
-    private List<RagReference> searchReferences(String question, Long userId, Long videoId) {
-        float[] queryEmbedding = embeddingClient.embed(question);
-        List<KnowledgeSearchResult> results = knowledgeSearchRepository.search(userId, videoId, queryEmbedding, RAG_TOP_K);
-        return results.stream()
-                .map(this::toReference)
-                .toList();
-    }
-
-    private RagReference toReference(KnowledgeSearchResult result) {
-        return RagReference.builder()
-                .videoId(result.getVideoId())
-                .taskId(result.getTaskId())
-                .chunkType(result.getChunkType())
-                .chunkIndex(result.getChunkIndex())
-                .chunkText(result.getChunkText())
-                .score(result.getScore())
-                .sourceType("VIDEO")
-                .title("视频内容")
-                .build();
-    }
-
-    private void doStreamMessage(ChatMessageRequest request, Long userId, SseEmitter emitter) {
-        try {
-            ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
-            validateSessionMode(session, request.getApplicationMode());
-            updateSessionTitle(session, request.getQuestion());
-            LocalDateTime now = LocalDateTime.now();
-
-            ChatMessage userMessage = new ChatMessage();
-            userMessage.setSessionId(request.getSessionId());
-            userMessage.setUserId(userId);
-            userMessage.setRole(MessageRole.USER);
-            userMessage.setContent(request.getQuestion());
-            userMessage.setCreatedTime(now);
-            chatMessageMapper.insert(userMessage);
-
-            ConversationContext context = conversationContextService.getContext(request.getSessionId(), userId);
-            StringBuilder answer = new StringBuilder();
-            List<RagReference> references;
-            if (isAgentChatEnabled(request)) {
-                try {
-                    AgentChatClient.AgentChatResult agentResult = invokeAgentChat(request, userId, context, delta -> {
-                        answer.append(delta);
-                        sendEvent(emitter, "delta", Map.of("delta", delta));
-                    });
-                    references = agentResult.references();
-                    if (answer.isEmpty() && StringUtils.hasText(agentResult.answer())) {
-                        answer.append(agentResult.answer());
-                    }
-                } catch (Exception ex) {
-                    if (Boolean.TRUE.equals(request.getWebSearchEnabled())
-                            || !agentProperties.isFallbackOnError()
-                            || !answer.isEmpty()) {
-                        throw ex;
-                    }
-                    references = streamLegacyAnswer(request, userId, context, answer, emitter);
-                }
-            } else {
-                references = streamLegacyAnswer(request, userId, context, answer, emitter);
+    private List<Long> sessionScope(ChatSession session, Long userId) {
+        if (StringUtils.hasText(session.getKnowledgeBaseIdsJson())) {
+            try {
+                List<Long> values = objectMapper.readValue(session.getKnowledgeBaseIdsJson(), new TypeReference<>() { });
+                if (!values.isEmpty()) return List.copyOf(values);
+            } catch (JsonProcessingException exception) {
+                throw new BizException(500, "会话知识库范围损坏");
             }
-            String referencesJson = toJson(references);
+        }
+        List<Long> scope = knowledgeBaseService.requireReadyConversationScope(userId, session.getVideoId(), List.of());
+        session.setKnowledgeBaseIdsJson(json(scope));
+        session.setApplicationMode(LOCAL_MODE);
+        chatSessionMapper.updateById(session);
+        return scope;
+    }
 
-            ChatMessage assistantMessage = new ChatMessage();
-            assistantMessage.setSessionId(request.getSessionId());
-            assistantMessage.setUserId(userId);
-            assistantMessage.setRole(MessageRole.ASSISTANT);
-            assistantMessage.setContent(answer.toString());
-            assistantMessage.setReferencesJson(referencesJson);
-            assistantMessage.setCreatedTime(LocalDateTime.now());
-            chatMessageMapper.insert(assistantMessage);
-            conversationSummaryService.compressIfNeeded(session.getId(), userId);
-            conversationContextService.refreshContext(session.getId(), userId);
-            updateSessionUpdatedTime(session);
+    private ChatMessage insertMessage(Long sessionId, Long userId, MessageRole role, String content, String refs) {
+        ChatMessage value = new ChatMessage();
+        value.setSessionId(sessionId);
+        value.setUserId(userId);
+        value.setRole(role);
+        value.setContent(content);
+        value.setReferencesJson(refs);
+        value.setCreatedTime(LocalDateTime.now());
+        chatMessageMapper.insert(value);
+        return value;
+    }
 
-            sendEvent(emitter, "done", ChatMessageResponse.builder()
-                    .messageId(assistantMessage.getId())
-                    .answer(assistantMessage.getContent())
-                    .references(references)
-                    .referencesJson(assistantMessage.getReferencesJson())
-                    .createdTime(assistantMessage.getCreatedTime())
-                    .build());
-            emitter.complete();
-        } catch (Exception ex) {
-            sendEvent(emitter, "error", ex.getMessage());
-            emitter.complete();
+    private void finishTurn(ChatSession session, Long userId, String question, String answer) {
+        if (!StringUtils.hasText(session.getTitle()) || NEW_SESSION_TITLE.equals(session.getTitle())) {
+            session.setTitle(shorten(question.strip(), 40));
+        }
+        session.setLastMessagePreview(shorten(answer == null ? null : answer.strip().replaceAll("\\s+", " "), 512));
+        session.setUpdatedTime(LocalDateTime.now());
+        session.setApplicationMode(LOCAL_MODE);
+        chatSessionMapper.updateById(session);
+        conversationSummaryService.compressIfNeeded(session.getId(), userId);
+        conversationContextService.refreshContext(session.getId(), userId);
+        ConversationContext refreshed = conversationContextService.getContext(session.getId(), userId);
+        long completed = chatMessageMapper.selectCount(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, session.getId()).eq(ChatMessage::getUserId, userId)
+                .eq(ChatMessage::getRole, MessageRole.ASSISTANT));
+        writeHotSnapshot(session, sessionScope(session, userId), refreshed, completed);
+    }
+
+    private void writeHotSnapshot(ChatSession session, List<Long> scope, ConversationContext context, long completed) {
+        try {
+            long boundary = context == null || context.getSummary() == null ? 0
+                    : context.getSummary().getCoveredTurnCount();
+            hotSnapshots.write(new HotConversationSnapshot(session.getId(), summary(context), boundary,
+                    completed, scope, Instant.now()));
+        } catch (RuntimeException exception) {
+            log.warn("Hot conversation snapshot unavailable, sessionId={}", session.getId(), exception);
+        }
+    }
+
+    private ChatSessionResponse toSessionResponse(ChatSession session, Long userId) {
+        ChatMessage last = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, session.getId()).eq(ChatMessage::getUserId, userId)
+                .orderByDesc(ChatMessage::getCreatedTime).last("LIMIT 1"));
+        return ChatSessionResponse.builder().id(session.getId()).videoId(session.getVideoId())
+                .title(session.getTitle()).lastMessagePreview(last == null ? session.getLastMessagePreview()
+                        : shorten(last.getContent(), 120)).knowledgeBaseIds(sessionScope(session, userId))
+                .createdTime(session.getCreatedTime()).updatedTime(session.getUpdatedTime()).build();
+    }
+
+    private void rejectUnsupportedTools(ChatMessageRequest request) {
+        if (Boolean.TRUE.equals(request.getWebSearchEnabled())) {
+            throw new BizException(501, "本地单模式尚未配置联网搜索工具");
+        }
+    }
+
+    private String summary(ConversationContext context) {
+        return context == null || context.getSummary() == null ? "" : context.getSummary().getSummaryText();
+    }
+
+    private String json(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            throw new BizException(500, "JSON 序列化失败：" + exception.getMessage());
         }
     }
 
     private void sendEvent(SseEmitter emitter, String name, Object data) {
         try {
             emitter.send(SseEmitter.event().name(name).data(data));
-        } catch (Exception ex) {
-            throw new BizException(500, "发送流式响应失败：" + ex.getMessage());
+        } catch (Exception exception) {
+            throw new BizException(500, "发送流式响应失败：" + exception.getMessage());
         }
     }
 
-    private ChatOutcome answer(ChatMessageRequest request, Long userId, ConversationContext context) {
-        if (isAgentChatEnabled(request)) {
-            try {
-                AgentChatClient.AgentChatResult result = invokeAgentChat(request, userId, context, ignored -> { });
-                return new ChatOutcome(result.answer(), result.references());
-            } catch (Exception ex) {
-                if (Boolean.TRUE.equals(request.getWebSearchEnabled()) || !agentProperties.isFallbackOnError()) {
-                    throw ex;
-                }
-            }
-        }
-        List<ChatMessage> recentMessages = turnAssembler.toMessages(context.getRecentTurns(), userId);
-        List<RagReference> references = searchReferences(request.getQuestion(), userId, request.getVideoId());
-        return new ChatOutcome(
-                chatAnswerClient.answer(
-                        request.getQuestion(), references, recentMessages, summaryText(context), request.getAnswerScope()),
-                references
-        );
+    private ChatMessageResponse response(ChatMessage message, List<RagReference> references) {
+        return ChatMessageResponse.builder().messageId(message.getId()).answer(message.getContent())
+                .references(references).referencesJson(message.getReferencesJson())
+                .createdTime(message.getCreatedTime()).build();
     }
 
-    private List<RagReference> streamLegacyAnswer(
-            ChatMessageRequest request,
-            Long userId,
-            ConversationContext context,
-            StringBuilder answer,
-            SseEmitter emitter
-    ) {
-        List<ChatMessage> recentMessages = turnAssembler.toMessages(context.getRecentTurns(), userId);
-        List<RagReference> references = searchReferences(request.getQuestion(), userId, request.getVideoId());
-        chatAnswerClient.streamAnswer(
-                request.getQuestion(), references, recentMessages, summaryText(context), request.getAnswerScope(), delta -> {
-            answer.append(delta);
-            sendEvent(emitter, "delta", Map.of("delta", delta));
-        });
-        return references;
+    private String shorten(String value, int max) {
+        return !StringUtils.hasText(value) || value.length() <= max ? value : value.substring(0, max) + "...";
     }
 
-    private AgentChatClient.AgentChatResult invokeAgentChat(
-            ChatMessageRequest request,
-            Long userId,
-            ConversationContext context,
-            java.util.function.Consumer<String> onDelta
-    ) {
-        VideoFile video = videoFileService.getVideoDetail(request.getVideoId(), userId);
-        List<Map<String, String>> recentTurns = new ArrayList<>();
-        for (ConversationTurn turn : context.getRecentTurns()) {
-            Map<String, String> item = new LinkedHashMap<>();
-            item.put("question", turn.getQuestion());
-            item.put("answer", turn.getAnswer());
-            recentTurns.add(item);
-        }
-        AgentChatClient.AgentChatRequest agentRequest = new AgentChatClient.AgentChatRequest(
-                video.getId(),
-                video.getAgentReportKnowledgeBaseId(),
-                request.getSessionId(),
-                request.getQuestion(),
-                AnswerScopePolicy.normalize(request.getAnswerScope()),
-                agentAnswerPolicy(request),
-                new AgentChatClient.AgentToolPolicy(
-                        true,
-                        Boolean.TRUE.equals(request.getWebSearchEnabled()),
-                        false
-                ),
-                summaryText(context),
-                recentTurns
-        );
-        return agentChatClient.chat(
-                agentRequest,
-                userId,
-                "chat:session:" + request.getSessionId() + ":request:" + UUID.randomUUID(),
-                null,
-                onDelta
-        );
-    }
-
-    private boolean isAgentChatEnabled(ChatMessageRequest request) {
-        return "ADVANCED".equalsIgnoreCase(request.getApplicationMode())
-                && agentProperties.isEnabled()
-                && agentProperties.isChatEnabled();
-    }
-
-    private String agentAnswerPolicy(ChatMessageRequest request) {
-        if (!Boolean.TRUE.equals(request.getWebSearchEnabled())) {
-            return AnswerScopePolicy.instruction(request.getAnswerScope());
-        }
-        return """
-                当前回答范围为【知识库扩展 + 联网搜索】。
-                - 优先使用当前视频知识库理解用户问题和视频上下文。
-                - 当视频知识不足、问题涉及外部事实或时效信息时，允许使用联网搜索补充。
-                - 必须区分视频内容与互联网补充信息，不得把外部信息描述成视频原文。
-                - 使用互联网信息时必须返回可访问的 Web 引用，包括标题和 URL。
-                """;
-    }
-
-    private void validateWebSearchRequest(ChatMessageRequest request) {
-        if (!Boolean.TRUE.equals(request.getWebSearchEnabled())) {
-            return;
-        }
-        if (!"ADVANCED".equalsIgnoreCase(request.getApplicationMode())) {
-            throw new BizException(400, "联网搜索仅支持高级模式");
-        }
-        if (!agentProperties.isEnabled() || !agentProperties.isChatEnabled()) {
-            throw new BizException(503, "Agent Platform 高级对话功能尚未启用");
-        }
-        if (!agentProperties.isWebSearchEnabled()) {
-            throw new BizException(503, "Agent Platform 联网搜索功能尚未启用");
-        }
-    }
-
-    private String toJson(List<RagReference> references) {
-        try {
-            return objectMapper.writeValueAsString(references);
-        } catch (JsonProcessingException ex) {
-            throw new BizException(500, "序列化引用片段失败：" + ex.getMessage());
-        }
-    }
-
-    private String summaryText(ConversationContext context) {
-        return context.getSummary() == null ? null : context.getSummary().getSummaryText();
-    }
-
-    private void updateSessionUpdatedTime(ChatSession session) {
-        session.setUpdatedTime(LocalDateTime.now());
-        chatSessionMapper.updateById(session);
-    }
-
-    private ChatSessionResponse toSessionResponse(ChatSession session, Long userId) {
-        if ("ADVANCED".equalsIgnoreCase(session.getApplicationMode())) {
-            return ChatSessionResponse.builder()
-                    .id(session.getId())
-                    .videoId(session.getVideoId())
-                    .title(session.getTitle())
-                    .lastMessagePreview(shorten(session.getLastMessagePreview(), 120))
-                    .createdTime(session.getCreatedTime())
-                    .updatedTime(session.getUpdatedTime())
-                    .build();
-        }
-        ChatMessage lastMessage = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, session.getId())
-                .eq(ChatMessage::getUserId, userId)
-                .orderByDesc(ChatMessage::getCreatedTime)
-                .last("LIMIT 1"));
-        ChatMessage firstUserMessage = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, session.getId())
-                .eq(ChatMessage::getUserId, userId)
-                .eq(ChatMessage::getRole, MessageRole.USER)
-                .orderByAsc(ChatMessage::getCreatedTime)
-                .last("LIMIT 1"));
-        String displayTitle = session.getTitle();
-        if ((!StringUtils.hasText(displayTitle) || "新会话".equals(displayTitle)) && firstUserMessage != null) {
-            displayTitle = shorten(firstUserMessage.getContent(), 40);
-        }
-        return ChatSessionResponse.builder()
-                .id(session.getId())
-                .videoId(session.getVideoId())
-                .title(displayTitle)
-                .lastMessagePreview(lastMessage == null ? null : shorten(lastMessage.getContent(), 120))
-                .createdTime(session.getCreatedTime())
-                .updatedTime(session.getUpdatedTime())
-                .build();
-    }
-
-    private void updateSessionTitle(ChatSession session, String question) {
-        if (!"新会话".equals(session.getTitle())) {
-            return;
-        }
-        session.setTitle(shorten(question.strip(), 40));
-        session.setUpdatedTime(LocalDateTime.now());
-        chatSessionMapper.updateById(session);
-    }
-
-    private void updateAdvancedSessionMetadata(ChatSession session, String question, String answer) {
-        if (!StringUtils.hasText(session.getTitle()) || "新会话".equals(session.getTitle())) {
-            session.setTitle(shorten(question.strip(), 40));
-        }
-        session.setLastMessagePreview(shorten(compactPreview(answer), 512));
-        session.setUpdatedTime(LocalDateTime.now());
-        chatSessionMapper.updateById(session);
-    }
-
-    private String compactPreview(String text) {
-        return StringUtils.hasText(text) ? text.strip().replaceAll("\\s+", " ") : null;
-    }
-
-    private String normalizeApplicationMode(String applicationMode) {
-        String normalized = StringUtils.hasText(applicationMode) ? applicationMode.strip().toUpperCase() : "NORMAL";
-        if (!"NORMAL".equals(normalized) && !"ADVANCED".equals(normalized)) {
-            throw new BizException(400, "applicationMode 仅支持 NORMAL 或 ADVANCED");
-        }
-        return normalized;
-    }
-
-    private void validateSessionMode(ChatSession session, String applicationMode) {
-        if (!normalizeApplicationMode(applicationMode).equalsIgnoreCase(session.getApplicationMode())) {
-            throw new BizException(409, "会话模式与当前请求不一致，请新建对应模式的会话");
-        }
-    }
-
-    private MessageRole agentMessageRole(String role) {
-        try {
-            return MessageRole.valueOf(role.toUpperCase());
-        } catch (Exception ignored) {
-            return MessageRole.ASSISTANT;
-        }
-    }
-
-    private LocalDateTime agentMessageTime(JsonNode node) {
-        String value = node.path("createdTime").asText(
-                node.path("createdAt").asText(node.path("timestamp").asText("")));
-        if (!StringUtils.hasText(value)) {
-            return LocalDateTime.now();
-        }
-        try {
-            return LocalDateTime.parse(value);
-        } catch (Exception ignored) {
-            try {
-                return OffsetDateTime.parse(value).atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
-            } catch (Exception ignoredAgain) {
-                return LocalDateTime.now();
-            }
-        }
-    }
-
-    private String shorten(String text, int maxLength) {
-        if (!StringUtils.hasText(text) || text.length() <= maxLength) {
-            return text;
-        }
-        return text.substring(0, maxLength) + "...";
-    }
-
-    private record ChatOutcome(String answer, List<RagReference> references) {
-    }
-
-    private void validateDeepThinkingRequest(ChatMessageRequest request) {
-        if (!Boolean.TRUE.equals(request.getDeepThinkingEnabled())) {
-            return;
-        }
-        if (!"ADVANCED".equalsIgnoreCase(request.getApplicationMode())) {
-            throw new BizException(400, "深度思考仅支持高级模式");
-        }
-        if (!agentProperties.isEnabled() || !agentProperties.isChatEnabled()) {
-            throw new BizException(503, "Agent Platform 高级对话功能尚未启用");
-        }
-    }
+    private record ChatOutcome(String answer, List<RagReference> references) { }
 }

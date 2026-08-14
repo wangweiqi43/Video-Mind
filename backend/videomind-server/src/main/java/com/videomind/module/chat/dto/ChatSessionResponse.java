@@ -1,6 +1,7 @@
 package com.videomind.module.chat.dto;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import lombok.Builder;
 import lombok.Data;
 
@@ -12,6 +13,7 @@ public class ChatSessionResponse {
     private Long videoId;
     private String title;
     private String lastMessagePreview;
+    private List<Long> knowledgeBaseIds;
     private LocalDateTime createdTime;
     private LocalDateTime updatedTime;
 }

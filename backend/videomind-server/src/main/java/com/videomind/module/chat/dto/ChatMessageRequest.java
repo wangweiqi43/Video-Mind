@@ -20,9 +20,6 @@ public class ChatMessageRequest {
     @Pattern(regexp = "KNOWLEDGE_ONLY|KNOWLEDGE_EXTENDED", message = "必须为 KNOWLEDGE_ONLY 或 KNOWLEDGE_EXTENDED")
     private String answerScope = "KNOWLEDGE_EXTENDED";
 
-    @Pattern(regexp = "NORMAL|ADVANCED", message = "必须为 NORMAL 或 ADVANCED")
-    private String applicationMode = "NORMAL";
-
     private Boolean webSearchEnabled = false;
 
     private Boolean deepThinkingEnabled = false;
