@@ -19,6 +19,7 @@ import com.videomind.module.task.mq.TaskEventMessage;
 import com.videomind.module.task.service.ConsumerInboxService;
 import com.videomind.module.task.service.ProcessingTaskHandler;
 import com.videomind.module.task.service.ProcessingTaskStateMachine;
+import com.videomind.module.task.service.TaskRecordProjectionService;
 import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseResult;
 import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseStatus;
 import java.util.List;
@@ -31,6 +32,7 @@ class TaskEventConsumerServiceImplTest {
     private final MqTransactionEventMapper events = mock(MqTransactionEventMapper.class);
     private final ConsumerInboxService inbox = mock(ConsumerInboxService.class);
     private final ProcessingTaskStateMachine stateMachine = mock(ProcessingTaskStateMachine.class);
+    private final TaskRecordProjectionService taskRecords = mock(TaskRecordProjectionService.class);
     private final ProcessingTaskHandler handler = mock(ProcessingTaskHandler.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private TaskEventConsumerServiceImpl service;
@@ -38,7 +40,8 @@ class TaskEventConsumerServiceImplTest {
     @BeforeEach
     void setUp() throws Exception {
         when(handler.type()).thenReturn(ProcessingTaskType.DOCUMENT_INGEST);
-        service = new TaskEventConsumerServiceImpl(events, inbox, stateMachine, objectMapper, List.of(handler));
+        service = new TaskEventConsumerServiceImpl(events, inbox, stateMachine, objectMapper, taskRecords,
+                List.of(handler));
         ReflectionTestUtils.setField(service, "consumerGroup", "group");
         ReflectionTestUtils.setField(service, "leaseSeconds", 300L);
         ReflectionTestUtils.setField(service, "retryDelaySeconds", 10L);
@@ -68,6 +71,7 @@ class TaskEventConsumerServiceImplTest {
         service.consume(new TaskEventMessage("event-1"));
 
         verify(handler).handle(any());
+        verify(taskRecords, org.mockito.Mockito.times(2)).project(9L);
         verify(inbox).complete("group", "event-1");
     }
 
@@ -83,6 +87,7 @@ class TaskEventConsumerServiceImplTest {
 
         assertThatThrownBy(() -> service.consume(new TaskEventMessage("event-1")))
                 .isInstanceOf(TaskEventConsumerServiceImpl.RetryableTaskMessageException.class);
+        verify(taskRecords, org.mockito.Mockito.times(2)).project(9L);
         verify(inbox, never()).complete(anyString(), anyString());
     }
 

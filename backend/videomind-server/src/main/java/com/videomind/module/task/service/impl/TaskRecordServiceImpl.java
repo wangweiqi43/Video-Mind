@@ -7,6 +7,7 @@ import com.videomind.common.enums.TaskStatus;
 import com.videomind.common.exception.BizException;
 import com.videomind.config.AiProperties;
 import com.videomind.config.RateLimitProperties;
+import com.videomind.config.TencentAsrProperties;
 import com.videomind.infrastructure.ratelimit.RateLimitService;
 import com.videomind.module.task.dto.AnalyzeTaskCreateRequest;
 import com.videomind.module.task.dto.AnalyzeTaskCreateResponse;
@@ -14,17 +15,19 @@ import com.videomind.module.task.entity.AiSummaryResult;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.mapper.AiSummaryResultMapper;
 import com.videomind.module.task.mapper.TaskRecordMapper;
-import com.videomind.module.task.mq.AnalyzeTaskMessageProducer;
-import com.videomind.module.task.mq.VideoAnalyzeMessage;
+import com.videomind.common.enums.ProcessingTaskType;
+import com.videomind.module.task.mq.TaskCreateCommand;
+import com.videomind.module.task.mq.TaskDispatchResult;
+import com.videomind.module.task.mq.TransactionalTaskMessageProducer;
 import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.HexFormat;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -33,41 +36,20 @@ import org.springframework.util.StringUtils;
 public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRecord> implements TaskRecordService {
 
     private final VideoFileService videoFileService;
-    private final AnalyzeTaskMessageProducer analyzeTaskMessageProducer;
+    private final TransactionalTaskMessageProducer taskMessages;
     private final RateLimitService rateLimitService;
     private final RateLimitProperties rateLimitProperties;
     private final AiSummaryResultMapper aiSummaryResultMapper;
     private final AiProperties aiProperties;
-    private final RedissonClient redissonClient;
+    private final TencentAsrProperties tencentAsrProperties;
 
     @Override
     public AnalyzeTaskCreateResponse createAnalyzeTask(AnalyzeTaskCreateRequest request, Long userId) {
         rateLimitService.acquire("analyze:user:" + userId, rateLimitProperties.getAnalyzePermitsPerMinute());
         VideoFile videoFile = videoFileService.getVideoDetail(request.getVideoId(), userId);
-        RLock lock = redissonClient.getLock("lock:analyze:create:md5:" + videoFile.getFileMd5());
-        boolean locked = false;
-        try {
-            locked = lock.tryLock(3, 10, TimeUnit.SECONDS);
-            if (!locked) {
-                throw new BizException(429, "同一视频解析任务正在创建中，请稍后再试");
-            }
-            return createAnalyzeTaskInLock(request, userId, videoFile);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new BizException(500, "创建解析任务被中断");
-        } finally {
-            if (locked && lock.isHeldByCurrentThread()) {
-                lock.unlock();
-            }
-        }
-    }
-
-    private AnalyzeTaskCreateResponse createAnalyzeTaskInLock(
-            AnalyzeTaskCreateRequest request,
-            Long userId,
-            VideoFile videoFile) {
         TaskRecord reusedTask = getOne(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
+                .eq(TaskRecord::getVideoId, videoFile.getId())
                 .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
                 .eq(TaskRecord::getTaskStatus, TaskStatus.SUCCESS)
                 .orderByDesc(TaskRecord::getCreatedTime)
@@ -75,45 +57,40 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         if (reusedTask != null && isReusableResult(reusedTask, videoFile)) {
             return buildReusedResponse(reusedTask);
         }
-
-        TaskRecord runningTask = getOne(new LambdaQueryWrapper<TaskRecord>()
-                .eq(TaskRecord::getUserId, userId)
-                .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
-                .in(TaskRecord::getTaskStatus, List.of(TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.RETRYING))
-                .orderByDesc(TaskRecord::getCreatedTime)
-                .last("LIMIT 1"));
-        if (runningTask != null) {
-            return buildReusedResponse(runningTask);
-        }
-
-        TaskRecord taskRecord = new TaskRecord();
-        taskRecord.setUserId(userId);
-        taskRecord.setVideoId(videoFile.getId());
-        taskRecord.setVideoMd5(videoFile.getFileMd5());
-        taskRecord.setTaskStatus(TaskStatus.PENDING);
-        taskRecord.setRetryCount(0);
-        LocalDateTime now = LocalDateTime.now();
-        taskRecord.setCreatedTime(now);
-        taskRecord.setUpdatedTime(now);
-        save(taskRecord);
-
-        try {
-            analyzeTaskMessageProducer.send(VideoAnalyzeMessage.builder()
-                    .taskId(taskRecord.getId())
-                    .videoId(videoFile.getId())
-                    .userId(userId)
-                    .videoMd5(videoFile.getFileMd5())
-                    .build());
-        } catch (Exception ex) {
-            markFailed(taskRecord.getId(), userId, ex.getMessage());
-            throw ex;
-        }
-
+        TaskCreateCommand command = new TaskCreateCommand(userId, ProcessingTaskType.VIDEO_ANALYSIS,
+                videoFile.getId(), videoFingerprint(userId, videoFile), "START", 5,
+                Map.of("videoMd5", videoFile.getFileMd5(), "timelineVersion", "timeline-fusion-v1"));
+        TaskDispatchResult dispatched = taskMessages.dispatch(command);
+        TaskRecord taskRecord = getTask(dispatched.businessId(), userId);
         return AnalyzeTaskCreateResponse.builder()
                 .taskId(taskRecord.getId())
                 .status(taskRecord.getTaskStatus())
-                .reused(false)
+                .reused(dispatched.reused())
                 .build();
+    }
+
+    private String videoFingerprint(Long userId, VideoFile videoFile) {
+        AiProperties.ApiProvider asr = aiProperties.getAsr();
+        AiProperties.ApiProvider summary = aiProperties.getSummary();
+        String signature = String.join("|", String.valueOf(userId), String.valueOf(videoFile.getId()),
+                safe(videoFile.getFileMd5()), safe(asr.getMode()), safe(asr.getProvider()), safe(asr.getEndpoint()),
+                safe(asr.getModel()), safe(tencentAsrProperties.getRegion()),
+                safe(tencentAsrProperties.getEngineModelType()), safe(summary.getMode()), safe(summary.getModel()),
+                safe(summary.getPromptVersion()), "timeline-fusion-v1");
+        return "VIDEO_ANALYSIS:" + userId + ":" + videoFile.getId() + ":" + sha256(signature);
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private AnalyzeTaskCreateResponse buildReusedResponse(TaskRecord taskRecord) {
@@ -163,6 +140,7 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         VideoFile videoFile = videoFileService.getVideoDetail(videoId, userId);
         TaskRecord taskRecord = getOne(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
+                .eq(TaskRecord::getVideoId, videoFile.getId())
                 .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
                 .eq(TaskRecord::getTaskStatus, TaskStatus.SUCCESS)
                 .orderByDesc(TaskRecord::getCreatedTime)

@@ -12,6 +12,7 @@ import com.videomind.module.task.service.ProcessingTaskStateMachine;
 import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseResult;
 import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseStatus;
 import com.videomind.module.task.service.TaskEventConsumerService;
+import com.videomind.module.task.service.TaskRecordProjectionService;
 import java.time.Duration;
 import java.util.EnumMap;
 import java.util.List;
@@ -26,6 +27,7 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
     private final ConsumerInboxService inbox;
     private final ProcessingTaskStateMachine stateMachine;
     private final ObjectMapper objectMapper;
+    private final TaskRecordProjectionService taskRecords;
     private final Map<com.videomind.common.enums.ProcessingTaskType, ProcessingTaskHandler> handlers;
 
     @Value("${videomind.rocketmq.consumer-group.processing-task}")
@@ -39,11 +41,13 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
 
     public TaskEventConsumerServiceImpl(MqTransactionEventMapper events, ConsumerInboxService inbox,
                                         ProcessingTaskStateMachine stateMachine, ObjectMapper objectMapper,
+                                        TaskRecordProjectionService taskRecords,
                                         List<ProcessingTaskHandler> handlers) {
         this.events = events;
         this.inbox = inbox;
         this.stateMachine = stateMachine;
         this.objectMapper = objectMapper;
+        this.taskRecords = taskRecords;
         this.handlers = new EnumMap<>(com.videomind.common.enums.ProcessingTaskType.class);
         for (ProcessingTaskHandler handler : handlers) {
             if (this.handlers.put(handler.type(), handler) != null) {
@@ -71,6 +75,7 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
         LeaseResult lease = stateMachine.acquire(event.getTaskId(), owner, command.initialStage(),
                 Duration.ofSeconds(Math.max(30, leaseSeconds)));
         if (lease.status() == LeaseStatus.TERMINAL || lease.status() == LeaseStatus.RETRY_EXHAUSTED) {
+            taskRecords.project(event.getTaskId());
             inbox.complete(consumerGroup, event.getEventId());
             return;
         }
@@ -80,11 +85,13 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
         if (lease.status() != LeaseStatus.ACQUIRED) {
             throw new RetryableTaskMessageException("TASK_LEASE_" + lease.status());
         }
+        taskRecords.project(event.getTaskId());
 
         ProcessingTaskHandler handler = handlers.get(command.taskType());
         if (handler == null) {
             stateMachine.fail(event.getTaskId(), owner, lease.stateVersion(), command.initialStage(),
                     "TASK_HANDLER_MISSING", "没有注册任务处理器：" + command.taskType());
+            taskRecords.project(event.getTaskId());
             inbox.complete(consumerGroup, event.getEventId());
             throw new NonRetryableTaskMessageException("TASK_HANDLER_MISSING");
         }
@@ -93,16 +100,21 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
             if (!stateMachine.succeed(event.getTaskId(), owner, lease.stateVersion(), finalStage)) {
                 throw new RetryableTaskMessageException("TASK_SUCCESS_CAS_LOST");
             }
+            taskRecords.project(event.getTaskId());
             inbox.complete(consumerGroup, event.getEventId());
         } catch (NonRetryableTaskMessageException known) {
             stateMachine.fail(event.getTaskId(), owner, lease.stateVersion(), command.initialStage(),
                     known.getMessage(), known.getMessage());
+            taskRecords.project(event.getTaskId());
             inbox.complete(consumerGroup, event.getEventId());
             throw known;
         } catch (Exception failure) {
-            stateMachine.retry(event.getTaskId(), owner, lease.stateVersion(), command.initialStage(),
+            boolean retrying = stateMachine.retry(event.getTaskId(), owner, lease.stateVersion(), command.initialStage(),
                     Duration.ofSeconds(Math.max(1, retryDelaySeconds)), "TASK_EXECUTION_FAILED",
                     failure.getMessage());
+            if (retrying) {
+                taskRecords.project(event.getTaskId());
+            }
             throw new RetryableTaskMessageException("TASK_EXECUTION_FAILED", failure);
         }
     }
