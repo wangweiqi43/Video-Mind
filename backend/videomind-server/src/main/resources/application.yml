@@ -48,6 +48,16 @@ logging:
   level:
     com.videomind: debug
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-components: never
+      show-details: never
+
 videomind:
   auth:
     jwt-secret: ${VIDEOMIND_JWT_SECRET}
@@ -100,7 +110,7 @@ videomind:
     username: ${ELASTICSEARCH_USERNAME:}
     password: ${ELASTICSEARCH_PASSWORD:}
     connect-timeout-millis: ${ELASTICSEARCH_CONNECT_TIMEOUT_MILLIS:2000}
-    read-timeout-millis: ${ELASTICSEARCH_READ_TIMEOUT_MILLIS:5000}
+    read-timeout-millis: ${ELASTICSEARCH_READ_TIMEOUT_MILLIS:60000}
   cache-redis:
     host: ${CACHE_REDIS_HOST:localhost}
     port: ${CACHE_REDIS_PORT:6382}

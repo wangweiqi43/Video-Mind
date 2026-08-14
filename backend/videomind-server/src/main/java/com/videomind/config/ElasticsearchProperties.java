@@ -15,5 +15,5 @@ public class ElasticsearchProperties {
     private String username;
     private String password;
     private int connectTimeoutMillis = 2_000;
-    private int readTimeoutMillis = 5_000;
+    private int readTimeoutMillis = 60_000;
 }

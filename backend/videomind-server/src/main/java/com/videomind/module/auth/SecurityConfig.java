@@ -29,7 +29,9 @@ public class SecurityConfig {
                         // response after the request thread's security context is cleared.
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(
-                                "/api/auth/**")
+                                "/api/auth/**",
+                                "/actuator/health",
+                                "/actuator/health/**")
                         .permitAll()
                         .anyRequest()
                         .authenticated())

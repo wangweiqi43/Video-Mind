@@ -23,7 +23,7 @@ $backendErrorLog = Join-Path $logDir "backend-start.err.log"
 $frontendLog = Join-Path $logDir "frontend-start.out.log"
 $frontendErrorLog = Join-Path $logDir "frontend-start.err.log"
 $localSecretsFile = Join-Path $runtimeDir "local-secrets.env"
-$backendHealthUrl = "http://localhost:8080/api/v1/system/capabilities"
+$backendHealthUrl = "http://localhost:8080/actuator/health"
 $frontendHealthUrl = "http://localhost:5173"
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
@@ -134,30 +134,13 @@ function Ensure-LocalDevelopmentSecret {
 Import-EnvironmentFile -Path (Join-Path $repoRoot ".env")
 foreach ($name in @(
     "SILICONFLOW_API_KEY",
-    "MYSQL_HOST",
-    "MYSQL_PORT",
-    "MYSQL_DATABASE",
-    "MYSQL_USERNAME",
-    "MYSQL_PASSWORD",
-    "MINIO_ENDPOINT",
-    "MINIO_PRESIGN_ENDPOINT",
+    "TENCENT_CLOUD_SECRET_ID",
+    "TENCENT_CLOUD_SECRET_KEY",
+    "VIDEOMIND_DATA_ROOT",
     "VIDEOMIND_JWT_SECRET",
     "VIDEOMIND_TOKEN_ENCRYPTION_KEY",
-    "VIDEOMIND_AGENT_ENABLED",
-    "VIDEOMIND_AGENT_INGEST_ENABLED",
-    "VIDEOMIND_AGENT_CHAT_ENABLED",
-    "VIDEOMIND_AGENT_WEB_SEARCH_ENABLED",
-    "VIDEOMIND_AGENT_ADVANCED_REPORT_ENABLED",
-    "VIDEOMIND_AGENT_PRESENTATION_ENABLED",
-    "AGENT_PLATFORM_BASE_URL",
-    "AGENT_PLATFORM_TENANT_ID",
-    "AGENT_PLATFORM_FRONTEND_URL",
-    "AGENT_PLATFORM_OAUTH_CLIENT_ID",
-    "AGENT_PLATFORM_OAUTH_CLIENT_SECRET",
-    "AGENT_PLATFORM_OAUTH_REDIRECT_URI",
-    "AGENT_PLATFORM_WEBHOOK_SECRET",
-    "AGENT_PRESIGNED_URL_EXPIRY_SECONDS",
-    "AGENT_TASK_POLL_INTERVAL_SECONDS"
+    "FFMPEG_BINARY_PATH",
+    "FFPROBE_BINARY_PATH"
 )) {
     Import-UserEnvironmentVariable -Name $name
 }
@@ -278,14 +261,53 @@ if (-not (Test-DockerReady)) {
     Start-DockerDesktop
 }
 
+try {
+    $physicalMemoryGiB = [math]::Round(
+        (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB,
+        1
+    )
+    if ($physicalMemoryGiB -lt 16) {
+        Write-Warning "Only $physicalMemoryGiB GiB physical memory was detected. MinerU pipeline CPU mode requires at least 16 GiB for real E2E; ops\e2e-local.ps1 will refuse the real run."
+    } else {
+        Write-Host "[OK] Physical memory: $physicalMemoryGiB GiB" -ForegroundColor Green
+    }
+} catch {
+    Write-Warning "Physical memory could not be detected. Verify at least 16 GiB before running real MinerU E2E."
+}
+
+$composeHelp = (& docker compose up --help 2>&1) -join "`n"
+if ($composeHelp -notmatch '--wait') {
+    throw "Docker Compose does not support 'up --wait'. Upgrade Docker Desktop before starting VideoMind."
+}
+
+$dependencyServices = @(
+    "mysql",
+    "minio",
+    "rocketmq-namesrv",
+    "rocketmq-broker",
+    "redis-stack",
+    "redis-cache",
+    "elasticsearch",
+    "mineru",
+    "paddleocr"
+)
+
 Write-Host "[..] Starting Docker dependencies..."
-& docker compose --project-directory $repoRoot up -d mysql minio rocketmq-namesrv rocketmq-broker redis-stack
+& docker compose --project-directory $repoRoot config --quiet
 if ($LASTEXITCODE -ne 0) {
-    throw "Docker dependencies failed to start."
+    throw "docker-compose.yml validation failed."
+}
+& docker compose --project-directory $repoRoot up -d --wait --wait-timeout 1800 @dependencyServices
+if ($LASTEXITCODE -ne 0) {
+    & docker compose --project-directory $repoRoot ps
+    throw "Docker dependencies failed to become healthy. Inspect the unhealthy service logs with 'docker compose logs <service>'."
 }
 
 if (-not $env:SILICONFLOW_API_KEY) {
     Write-Warning "SILICONFLOW_API_KEY is not configured. Real AI requests will fail."
+}
+if (-not $env:TENCENT_CLOUD_SECRET_ID -or -not $env:TENCENT_CLOUD_SECRET_KEY) {
+    Write-Warning "Tencent ASR credentials are not configured. Set rotated TENCENT_CLOUD_SECRET_ID and TENCENT_CLOUD_SECRET_KEY as local environment variables; never write them to the repository."
 }
 
 $env:VIDEOMIND_ASR_MODE = "real"
@@ -358,8 +380,12 @@ Write-Host ""
 Write-Host "VideoMind is running." -ForegroundColor Cyan
 Write-Host "Frontend:     http://localhost:5173"
 Write-Host "Backend API:  http://localhost:8080"
+Write-Host "Backend health:http://localhost:8080/actuator/health"
 Write-Host "MinIO:        http://localhost:9002"
 Write-Host "RedisInsight: http://localhost:8001"
+Write-Host "Elasticsearch:http://localhost:9201"
+Write-Host "MinerU:      http://localhost:8003"
+Write-Host "PaddleOCR:   http://localhost:8868"
 Write-Host "Logs:         $logDir"
 
 if ($OpenBrowser) {
