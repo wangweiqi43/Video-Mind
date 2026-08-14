@@ -64,8 +64,10 @@ videomind:
   rocketmq:
     topic:
       video-analyze: videomind-video-analyze-topic
+      processing-task: ${PROCESSING_TASK_TOPIC:videomind-processing-task-topic}
     consumer-group:
       video-analyze: videomind-video-analyze-consumer
+      processing-task: ${PROCESSING_TASK_CONSUMER_GROUP:videomind-processing-task-consumer}
     dlq-topic:
       video-analyze: ${VIDEO_ANALYZE_DLQ_TOPIC:%DLQ%videomind-video-analyze-consumer}
     dlq-consumer-group:

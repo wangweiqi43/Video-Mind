@@ -4,9 +4,22 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.videomind.module.task.entity.ProcessingTask;
 import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Update;
 
 public interface ProcessingTaskMapper extends BaseMapper<ProcessingTask> {
+    @Insert("""
+            INSERT IGNORE INTO processing_task
+                (id, event_id, user_id, task_type, business_id, business_fingerprint,
+                 active_fingerprint, state, stage, state_version, attempt_count, max_attempts,
+                 replay_generation, created_time, updated_time)
+            VALUES
+                (#{id}, #{eventId}, #{userId}, #{taskType}, #{businessId}, #{businessFingerprint},
+                 #{activeFingerprint}, #{state}, #{stage}, #{stateVersion}, #{attemptCount}, #{maxAttempts},
+                 #{replayGeneration}, #{createdTime}, #{updatedTime})
+            """)
+    int insertIgnoreActive(ProcessingTask task);
+
     @Update("""
             UPDATE processing_task
                SET state = 'PROCESSING', stage = #{stage}, lease_owner = #{owner},
