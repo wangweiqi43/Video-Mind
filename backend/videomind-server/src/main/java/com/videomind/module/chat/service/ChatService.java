@@ -12,7 +12,7 @@ public interface ChatService {
 
     ChatSessionCreateResponse createSession(Long videoId, String applicationMode, Long userId);
 
-    List<ChatSessionResponse> listSessions(Long videoId, Long userId);
+    List<ChatSessionResponse> listSessions(Long videoId, String applicationMode, Long userId);
 
     ChatMessageResponse sendMessage(ChatMessageRequest request, Long userId);
 

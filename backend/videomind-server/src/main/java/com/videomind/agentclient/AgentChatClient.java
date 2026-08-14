@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.videomind.module.chat.dto.RagReference;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -33,14 +34,18 @@ public class AgentChatClient {
     }
 
     public AgentChatResult chatConversation(
-            String conversationId, String question, AgentToolPolicy toolPolicy, Long userId,
+            String conversationId, String question, AgentToolPolicy toolPolicy, boolean deepThinking, Long userId,
             String idempotencyKey, String traceId, Consumer<String> onDelta
     ) {
         StringBuilder answer = new StringBuilder();
         List<RagReference> references = new ArrayList<>();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("content", question);
+        payload.put("toolPolicy", toolPolicy);
+        payload.put("reasoningMode", deepThinking ? "deep" : "standard");
         apiClient.postSse(
                 "/v1/conversations/" + conversationId + "/messages:stream",
-                Map.of("content", question, "toolPolicy", toolPolicy),
+                payload,
                 AgentRequestContext.of(properties.getTenantId(), userId, idempotencyKey, traceId),
                 event -> handleEvent(event, answer, references, onDelta)
         );
@@ -82,7 +87,7 @@ public class AgentChatClient {
             String delta = node == null
                     ? event.data()
                     : node.path("delta").asText(node.path("content").asText(node.path("text").asText("")));
-            if (StringUtils.hasText(delta)) {
+            if (delta != null && !delta.isEmpty()) {
                 answer.append(delta);
                 onDelta.accept(delta);
             }
@@ -94,11 +99,11 @@ public class AgentChatClient {
             } else if ("reference".equalsIgnoreCase(type) || "source".equalsIgnoreCase(type)) {
                 references.add(toReference(node.has("reference") ? node.get("reference") : node));
             }
-            if ("done".equalsIgnoreCase(type) && answer.isEmpty()) {
+            if ("done".equalsIgnoreCase(type)) {
                 String finalAnswer = node.path("answer").asText("");
-                if (StringUtils.hasText(finalAnswer)) {
+                if (!finalAnswer.isEmpty()) {
+                    answer.setLength(0);
                     answer.append(finalAnswer);
-                    onDelta.accept(finalAnswer);
                 }
             }
         }

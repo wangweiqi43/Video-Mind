@@ -10,6 +10,7 @@ import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.task.service.TaskResultService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@Slf4j
 @RequiredArgsConstructor
 @RequestMapping("/api/tasks")
 public class TaskController {
@@ -28,7 +30,23 @@ public class TaskController {
 
     @PostMapping("/analyze")
     public ApiResponse<AnalyzeTaskCreateResponse> analyze(@Valid @RequestBody AnalyzeTaskCreateRequest request) {
-        return ApiResponse.success(taskRecordService.createAnalyzeTask(request, MockUserContext.currentUserId()));
+        long startNanos = System.nanoTime();
+        Long userId = MockUserContext.currentUserId();
+        try {
+            AnalyzeTaskCreateResponse response = taskRecordService.createAnalyzeTask(request, userId);
+            log.info("Analyze task submit completed, taskId={}, videoId={}, userId={}, reused={}, status={}, costMs={}",
+                    response.getTaskId(), request.getVideoId(), userId, response.getReused(), response.getStatus(),
+                    elapsedMs(startNanos));
+            return ApiResponse.success(response);
+        } catch (RuntimeException ex) {
+            log.warn("Analyze task submit failed, videoId={}, userId={}, costMs={}, reason={}",
+                    request.getVideoId(), userId, elapsedMs(startNanos), ex.getMessage());
+            throw ex;
+        }
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000;
     }
 
     @GetMapping("/{taskId}")

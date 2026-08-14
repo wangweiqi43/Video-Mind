@@ -19,6 +19,7 @@ public class ChatSession {
     private String memorySummary;
     private String applicationMode;
     private String mindagentConversationId;
+    private String lastMessagePreview;
     private LocalDateTime createdTime;
     private LocalDateTime updatedTime;
     @TableLogic

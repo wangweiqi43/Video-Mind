@@ -31,6 +31,8 @@ import com.videomind.module.knowledge.repository.KnowledgeSearchRepository;
 import com.videomind.module.video.service.VideoFileService;
 import com.videomind.module.video.entity.VideoFile;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -70,7 +72,7 @@ public class ChatServiceImpl implements ChatService {
         session.setUserId(userId);
         session.setVideoId(videoId);
         session.setTitle("新会话");
-        session.setApplicationMode(applicationMode == null ? "NORMAL" : applicationMode);
+        session.setApplicationMode(normalizeApplicationMode(applicationMode));
         session.setCreatedTime(now);
         session.setUpdatedTime(now);
         chatSessionMapper.insert(session);
@@ -83,11 +85,13 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public List<ChatSessionResponse> listSessions(Long videoId, Long userId) {
+    public List<ChatSessionResponse> listSessions(Long videoId, String applicationMode, Long userId) {
         videoFileService.getVideoDetail(videoId, userId);
+        String normalizedMode = normalizeApplicationMode(applicationMode);
         return chatSessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
                 .eq(ChatSession::getUserId, userId)
                 .eq(ChatSession::getVideoId, videoId)
+                .eq(ChatSession::getApplicationMode, normalizedMode)
                 .orderByDesc(ChatSession::getUpdatedTime))
                 .stream()
                 .map(session -> toSessionResponse(session, userId))
@@ -97,10 +101,12 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public ChatMessageResponse sendMessage(ChatMessageRequest request, Long userId) {
         validateWebSearchRequest(request);
+        validateDeepThinkingRequest(request);
         if (isAgentChatEnabled(request)) {
             throw new BizException(400, "高级模式必须使用流式消息接口");
         }
         ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
+        validateSessionMode(session, request.getApplicationMode());
         updateSessionTitle(session, request.getQuestion());
         LocalDateTime now = LocalDateTime.now();
 
@@ -142,6 +148,7 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public SseEmitter streamMessage(ChatMessageRequest request, Long userId) {
         validateWebSearchRequest(request);
+        validateDeepThinkingRequest(request);
         if (isAgentChatEnabled(request)) {
             return streamAgentOwnedMessage(request, userId);
         }
@@ -163,7 +170,10 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public List<ChatMessage> listMessages(Long sessionId, Long videoId, Long userId) {
         ChatSession session = getSession(sessionId, videoId, userId);
-        if ("ADVANCED".equalsIgnoreCase(session.getApplicationMode()) && StringUtils.hasText(session.getMindagentConversationId())) {
+        if ("ADVANCED".equalsIgnoreCase(session.getApplicationMode())) {
+            if (!StringUtils.hasText(session.getMindagentConversationId())) {
+                return List.of();
+            }
             JsonNode nodes = agentChatClient.listMessages(session.getMindagentConversationId(), userId, null);
             List<ChatMessage> remote = new ArrayList<>();
             if (nodes.isArray()) {
@@ -171,11 +181,11 @@ public class ChatServiceImpl implements ChatService {
                     ChatMessage message = new ChatMessage();
                     message.setSessionId(sessionId);
                     message.setUserId(userId);
-                    message.setRole(MessageRole.valueOf(node.path("role").asText("USER")));
+                    message.setRole(agentMessageRole(node.path("role").asText("USER")));
                     message.setContent(node.path("content").asText());
-                    JsonNode refs = node.get("referencesJson");
+                    JsonNode refs = node.has("referencesJson") ? node.get("referencesJson") : node.get("references");
                     message.setReferencesJson(refs == null || refs.isNull() ? null : refs.isTextual() ? refs.asText() : refs.toString());
-                    message.setCreatedTime(LocalDateTime.now());
+                    message.setCreatedTime(agentMessageTime(node));
                     remote.add(message);
                 });
             }
@@ -193,6 +203,7 @@ public class ChatServiceImpl implements ChatService {
         CompletableFuture.runAsync(() -> {
             try {
                 ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
+                validateSessionMode(session, "ADVANCED");
                 VideoFile video = videoFileService.getVideoDetail(request.getVideoId(), userId);
                 if (!StringUtils.hasText(video.getAgentReportKnowledgeBaseId())) {
                     throw new BizException(409, "当前视频的高级摘要总结知识库尚未就绪，请稍后重试");
@@ -203,14 +214,13 @@ public class ChatServiceImpl implements ChatService {
                     session.setApplicationMode("ADVANCED");
                     chatSessionMapper.updateById(session);
                 }
-                StringBuilder answer = new StringBuilder();
                 AgentChatClient.AgentChatResult result = agentChatClient.chatConversation(
                         session.getMindagentConversationId(), request.getQuestion(),
                         new AgentChatClient.AgentToolPolicy(true, Boolean.TRUE.equals(request.getWebSearchEnabled()), false, false),
+                        Boolean.TRUE.equals(request.getDeepThinkingEnabled()),
                         userId, "chat:session:" + session.getId() + ":" + UUID.randomUUID(), traceId,
-                        delta -> { answer.append(delta); sendEvent(emitter, "delta", delta); });
-                updateSessionTitle(session, request.getQuestion());
-                updateSessionUpdatedTime(session);
+                        delta -> sendEvent(emitter, "delta", Map.of("delta", delta)));
+                updateAdvancedSessionMetadata(session, request.getQuestion(), result.answer());
                 sendEvent(emitter, "done", ChatMessageResponse.builder()
                         .answer(result.answer()).references(result.references()).referencesJson(toJson(result.references()))
                         .createdTime(LocalDateTime.now()).build());
@@ -259,6 +269,7 @@ public class ChatServiceImpl implements ChatService {
     private void doStreamMessage(ChatMessageRequest request, Long userId, SseEmitter emitter) {
         try {
             ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
+            validateSessionMode(session, request.getApplicationMode());
             updateSessionTitle(session, request.getQuestion());
             LocalDateTime now = LocalDateTime.now();
 
@@ -277,7 +288,7 @@ public class ChatServiceImpl implements ChatService {
                 try {
                     AgentChatClient.AgentChatResult agentResult = invokeAgentChat(request, userId, context, delta -> {
                         answer.append(delta);
-                        sendEvent(emitter, "delta", delta);
+                        sendEvent(emitter, "delta", Map.of("delta", delta));
                     });
                     references = agentResult.references();
                     if (answer.isEmpty() && StringUtils.hasText(agentResult.answer())) {
@@ -362,7 +373,7 @@ public class ChatServiceImpl implements ChatService {
         chatAnswerClient.streamAnswer(
                 request.getQuestion(), references, recentMessages, summaryText(context), request.getAnswerScope(), delta -> {
             answer.append(delta);
-            sendEvent(emitter, "delta", delta);
+            sendEvent(emitter, "delta", Map.of("delta", delta));
         });
         return references;
     }
@@ -457,6 +468,16 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private ChatSessionResponse toSessionResponse(ChatSession session, Long userId) {
+        if ("ADVANCED".equalsIgnoreCase(session.getApplicationMode())) {
+            return ChatSessionResponse.builder()
+                    .id(session.getId())
+                    .videoId(session.getVideoId())
+                    .title(session.getTitle())
+                    .lastMessagePreview(shorten(session.getLastMessagePreview(), 120))
+                    .createdTime(session.getCreatedTime())
+                    .updatedTime(session.getUpdatedTime())
+                    .build();
+        }
         ChatMessage lastMessage = chatMessageMapper.selectOne(new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, session.getId())
                 .eq(ChatMessage::getUserId, userId)
@@ -491,6 +512,58 @@ public class ChatServiceImpl implements ChatService {
         chatSessionMapper.updateById(session);
     }
 
+    private void updateAdvancedSessionMetadata(ChatSession session, String question, String answer) {
+        if (!StringUtils.hasText(session.getTitle()) || "新会话".equals(session.getTitle())) {
+            session.setTitle(shorten(question.strip(), 40));
+        }
+        session.setLastMessagePreview(shorten(compactPreview(answer), 512));
+        session.setUpdatedTime(LocalDateTime.now());
+        chatSessionMapper.updateById(session);
+    }
+
+    private String compactPreview(String text) {
+        return StringUtils.hasText(text) ? text.strip().replaceAll("\\s+", " ") : null;
+    }
+
+    private String normalizeApplicationMode(String applicationMode) {
+        String normalized = StringUtils.hasText(applicationMode) ? applicationMode.strip().toUpperCase() : "NORMAL";
+        if (!"NORMAL".equals(normalized) && !"ADVANCED".equals(normalized)) {
+            throw new BizException(400, "applicationMode 仅支持 NORMAL 或 ADVANCED");
+        }
+        return normalized;
+    }
+
+    private void validateSessionMode(ChatSession session, String applicationMode) {
+        if (!normalizeApplicationMode(applicationMode).equalsIgnoreCase(session.getApplicationMode())) {
+            throw new BizException(409, "会话模式与当前请求不一致，请新建对应模式的会话");
+        }
+    }
+
+    private MessageRole agentMessageRole(String role) {
+        try {
+            return MessageRole.valueOf(role.toUpperCase());
+        } catch (Exception ignored) {
+            return MessageRole.ASSISTANT;
+        }
+    }
+
+    private LocalDateTime agentMessageTime(JsonNode node) {
+        String value = node.path("createdTime").asText(
+                node.path("createdAt").asText(node.path("timestamp").asText("")));
+        if (!StringUtils.hasText(value)) {
+            return LocalDateTime.now();
+        }
+        try {
+            return LocalDateTime.parse(value);
+        } catch (Exception ignored) {
+            try {
+                return OffsetDateTime.parse(value).atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+            } catch (Exception ignoredAgain) {
+                return LocalDateTime.now();
+            }
+        }
+    }
+
     private String shorten(String text, int maxLength) {
         if (!StringUtils.hasText(text) || text.length() <= maxLength) {
             return text;
@@ -499,5 +572,17 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private record ChatOutcome(String answer, List<RagReference> references) {
+    }
+
+    private void validateDeepThinkingRequest(ChatMessageRequest request) {
+        if (!Boolean.TRUE.equals(request.getDeepThinkingEnabled())) {
+            return;
+        }
+        if (!"ADVANCED".equalsIgnoreCase(request.getApplicationMode())) {
+            throw new BizException(400, "深度思考仅支持高级模式");
+        }
+        if (!agentProperties.isEnabled() || !agentProperties.isChatEnabled()) {
+            throw new BizException(503, "Agent Platform 高级对话功能尚未启用");
+        }
     }
 }

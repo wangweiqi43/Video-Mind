@@ -34,8 +34,11 @@ public class ChatController {
     }
 
     @GetMapping("/session/list")
-    public ApiResponse<List<ChatSessionResponse>> listSessions(@RequestParam Long videoId) {
-        return ApiResponse.success(chatService.listSessions(videoId, MockUserContext.currentUserId()));
+    public ApiResponse<List<ChatSessionResponse>> listSessions(
+            @RequestParam Long videoId,
+            @RequestParam(defaultValue = "NORMAL") String applicationMode
+    ) {
+        return ApiResponse.success(chatService.listSessions(videoId, applicationMode, MockUserContext.currentUserId()));
     }
 
     @PostMapping("/message")
@@ -55,7 +58,8 @@ public class ChatController {
             @RequestParam String question,
             @RequestParam(defaultValue = "KNOWLEDGE_EXTENDED") String answerScope,
             @RequestParam(defaultValue = "NORMAL") String applicationMode,
-            @RequestParam(defaultValue = "false") boolean webSearchEnabled
+            @RequestParam(defaultValue = "false") boolean webSearchEnabled,
+            @RequestParam(defaultValue = "false") boolean deepThinkingEnabled
     ) {
         ChatMessageRequest request = new ChatMessageRequest();
         request.setSessionId(sessionId);
@@ -64,6 +68,7 @@ public class ChatController {
         request.setAnswerScope(answerScope);
         request.setApplicationMode(applicationMode);
         request.setWebSearchEnabled(webSearchEnabled);
+        request.setDeepThinkingEnabled(deepThinkingEnabled);
         return chatService.streamMessage(request, MockUserContext.currentUserId());
     }
 

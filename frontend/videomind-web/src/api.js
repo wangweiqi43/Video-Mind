@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { decodeChatDelta } from './chatStream'
 
 const http = axios.create({
   baseURL: '/api',
@@ -99,14 +100,14 @@ export const api = {
   createSession(videoId, applicationMode = 'NORMAL') {
     return http.post('/chat/session', { videoId, applicationMode })
   },
-  listSessions(videoId) {
-    return http.get('/chat/session/list', { params: { videoId } })
+  listSessions(videoId, applicationMode = 'NORMAL') {
+    return http.get('/chat/session/list', { params: { videoId, applicationMode } })
   },
-  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', applicationMode = 'NORMAL', webSearchEnabled = false) {
-    return http.post('/chat/message', { sessionId, videoId, question, answerScope, applicationMode, webSearchEnabled })
+  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', applicationMode = 'NORMAL', webSearchEnabled = false, deepThinkingEnabled = false) {
+    return http.post('/chat/message', { sessionId, videoId, question, answerScope, applicationMode, webSearchEnabled, deepThinkingEnabled })
   },
-  streamMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled = false) {
-    return streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled)
+  streamMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled = false, deepThinkingEnabled = false) {
+    return streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled, deepThinkingEnabled)
   },
   listMessages(sessionId, videoId) {
     return http.get(`/chat/session/${sessionId}/messages`, { params: { videoId } })
@@ -134,19 +135,20 @@ export const api = {
   }
 }
 
-function streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled = false) {
+function streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled = false, deepThinkingEnabled = false) {
   const params = new URLSearchParams({
     sessionId: String(sessionId),
     videoId: String(videoId),
     question,
     answerScope,
     applicationMode,
-    webSearchEnabled: String(Boolean(webSearchEnabled))
+    webSearchEnabled: String(Boolean(webSearchEnabled)),
+    deepThinkingEnabled: String(Boolean(deepThinkingEnabled))
   })
   return new Promise((resolve, reject) => {
     const source = new EventSource(`/api/chat/message/stream?${params.toString()}`)
     source.addEventListener('delta', (event) => {
-      onDelta(event.data)
+      onDelta(decodeChatDelta(event.data))
     })
     source.addEventListener('done', (event) => {
       source.close()

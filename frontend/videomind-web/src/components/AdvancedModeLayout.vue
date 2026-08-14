@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import MarkdownIt from 'markdown-it'
 import { api } from '../api'
+import { normalizeHistoryMessages, sessionPreview, sessionTitle } from '../chatHistory'
+import { renderSafeMarkdown } from '../safeMarkdown'
 
 const props = defineProps({
   videos: { type: Array, default: () => [] },
@@ -18,7 +19,14 @@ const suggestionPage = ref(0)
 const messages = ref([])
 const activeSessionId = ref(null)
 const sending = ref(false)
+const chatView = ref('chat')
+const sessionList = ref([])
+const sessionListLoading = ref(false)
+const sessionListError = ref('')
+const historyMessageLoading = ref(false)
+let chatRequestVersion = 0
 const webSearchEnabled = ref(false)
+const deepThinkingEnabled = ref(false)
 const toolBusy = ref(false)
 const report = ref(null)
 const reportLoading = ref(false)
@@ -30,17 +38,8 @@ const ingestError = ref('')
 let ingestTimer = null
 let ingestRequestVersion = 0
 
-const markdown = new MarkdownIt({ html: false, linkify: true, typographer: false })
-const defaultLinkOpen = markdown.renderer.rules.link_open
-  || ((tokens, index, options, env, self) => self.renderToken(tokens, index, options))
-markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
-  tokens[index].attrSet('target', '_blank')
-  tokens[index].attrSet('rel', 'noopener noreferrer')
-  return defaultLinkOpen(tokens, index, options, env, self)
-}
-
 const videoKey = computed(() => props.selectedVideo?.id ? `videomind:advanced:draft:${props.selectedVideo.id}` : '')
-const reportHtml = computed(() => markdown.render(report.value?.reportMarkdown || ''))
+const reportHtml = computed(() => renderSafeMarkdown(report.value?.reportMarkdown || ''))
 const reportStatusText = computed(() => {
   if (!props.selectedVideo?.id) return '请先选择一个已完成转录的视频。'
   if (!props.capabilities.advanced_report) return '高级摘要总结功能尚未启用。'
@@ -78,6 +77,7 @@ const canSend = computed(() => Boolean(
   && props.selectedVideo?.id
   && draft.value.trim()
   && !sending.value
+  && chatView.value === 'chat'
 ))
 
 const suggestionPool = computed(() => {
@@ -111,12 +111,33 @@ const suggestions = computed(() => {
 })
 
 watch(videoKey, (key) => {
+  chatRequestVersion += 1
   draft.value = key ? localStorage.getItem(key) || '' : ''
   suggestionPage.value = 0
   messages.value = []
   activeSessionId.value = null
+  chatView.value = 'chat'
+  sessionList.value = []
+  sessionListLoading.value = false
+  sessionListError.value = ''
+  historyMessageLoading.value = false
+  sending.value = false
   webSearchEnabled.value = false
+  deepThinkingEnabled.value = false
 }, { immediate: true })
+
+watch(() => props.active, (active) => {
+  if (active) return
+  chatRequestVersion += 1
+  messages.value = []
+  activeSessionId.value = null
+  chatView.value = 'chat'
+  sessionList.value = []
+  sessionListLoading.value = false
+  sessionListError.value = ''
+  historyMessageLoading.value = false
+  sending.value = false
+})
 
 watch(draft, (value) => {
   if (videoKey.value) localStorage.setItem(videoKey.value, value)
@@ -251,17 +272,91 @@ function unavailable(feature = '高级模式') {
   })
 }
 
-async function ensureSession() {
+async function ensureSession(videoId, requestVersion) {
   if (activeSessionId.value) return activeSessionId.value
-  const session = await api.createSession(props.selectedVideo.id, 'ADVANCED')
+  const session = await api.createSession(videoId, 'ADVANCED')
+  if (!isCurrentChatRequest(requestVersion, videoId)) return null
   activeSessionId.value = session.id || session.sessionId
   return activeSessionId.value
 }
 
 function newConversation() {
+  if (sending.value) return
+  chatRequestVersion += 1
   messages.value = []
   activeSessionId.value = null
   draft.value = ''
+  chatView.value = 'chat'
+  sessionListError.value = ''
+}
+
+async function toggleHistory() {
+  if (sending.value) return
+  if (chatView.value === 'history') {
+    chatRequestVersion += 1
+    chatView.value = 'chat'
+    sessionListError.value = ''
+    return
+  }
+  chatView.value = 'history'
+  await loadHistorySessions()
+}
+
+async function loadHistorySessions() {
+  const videoId = props.selectedVideo?.id
+  if (!videoId) {
+    sessionList.value = []
+    sessionListError.value = '请先选择视频'
+    return
+  }
+  const requestVersion = ++chatRequestVersion
+  sessionListLoading.value = true
+  sessionListError.value = ''
+  try {
+    const sessions = await api.listSessions(videoId, 'ADVANCED')
+    if (!isCurrentChatRequest(requestVersion, videoId) || chatView.value !== 'history') return
+    sessionList.value = Array.isArray(sessions) ? sessions : []
+  } catch (error) {
+    if (!isCurrentChatRequest(requestVersion, videoId)) return
+    sessionListError.value = error.message || '历史会话加载失败'
+  } finally {
+    if (isCurrentChatRequest(requestVersion, videoId)) sessionListLoading.value = false
+  }
+}
+
+async function openHistorySession(session) {
+  if (sending.value || historyMessageLoading.value) return
+  const videoId = props.selectedVideo?.id
+  const requestVersion = ++chatRequestVersion
+  historyMessageLoading.value = true
+  sessionListError.value = ''
+  try {
+    const historyMessages = await api.listMessages(session.id, videoId)
+    if (!isCurrentChatRequest(requestVersion, videoId) || chatView.value !== 'history') return
+    messages.value = normalizeHistoryMessages(historyMessages)
+    activeSessionId.value = session.id
+    chatView.value = 'chat'
+  } catch (error) {
+    if (!isCurrentChatRequest(requestVersion, videoId)) return
+    sessionListError.value = error.message || '会话内容读取失败，请确认 MindAgent 授权和服务状态'
+  } finally {
+    if (isCurrentChatRequest(requestVersion, videoId)) historyMessageLoading.value = false
+  }
+}
+
+function isCurrentChatRequest(requestVersion, videoId) {
+  return requestVersion === chatRequestVersion
+    && props.active
+    && props.selectedVideo?.id === videoId
+}
+
+function formatSessionTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).format(date)
 }
 
 function toggleWebSearch() {
@@ -272,15 +367,21 @@ function toggleWebSearch() {
   webSearchEnabled.value = !webSearchEnabled.value
 }
 
-async function ensureAgentReady() {
-  if (!props.selectedVideo?.id) { ElMessage.warning('请先选择一个已解析的视频'); return false }
+function toggleDeepThinking() {
+  deepThinkingEnabled.value = !deepThinkingEnabled.value
+}
+
+async function ensureAgentReady(videoId = props.selectedVideo?.id, requestVersion = chatRequestVersion) {
+  if (!videoId || !isCurrentChatRequest(requestVersion, videoId)) { ElMessage.warning('请先选择一个已解析的视频'); return false }
   if (!(Number(props.selectedVideo?.transcriptVersion) > 0)) {
     ElMessage.warning('请先点击共享操作栏生成高级摘要总结')
     return false
   }
   const binding = await api.mindAgentBindingStatus()
+  if (!isCurrentChatRequest(requestVersion, videoId)) return false
   if (!binding.bound) { ElMessage.warning('请先点击页面右上角“绑定 MindAgent”并完成账号授权'); return false }
   if (ingestStatus.value !== 'SUCCESS') await startIngestSync(ingestRequestVersion)
+  if (!isCurrentChatRequest(requestVersion, videoId)) return false
   if (ingestStatus.value !== 'SUCCESS') {
     ElMessage.info('正在将当前视频转录同步到 MindAgent，请稍后重试')
     return false
@@ -288,6 +389,7 @@ async function ensureAgentReady() {
   const reportStatus = String(report.value?.status || '').toUpperCase()
   if (!['SUCCESS', 'COMPLETED'].includes(reportStatus) || !report.value?.reportKnowledgeBaseId) {
     await ensureAdvancedReport()
+    if (!isCurrentChatRequest(requestVersion, videoId)) return false
     ElMessage.info('正在生成高级摘要总结并建立正式知识库，请稍后重试')
     return false
   }
@@ -337,32 +439,47 @@ async function sendAdvancedMessage() {
   }
   if (!canSend.value) return
 
-  if (!(await ensureAgentReady())) return
-
-  const question = draft.value.trim()
-  draft.value = ''
+  const videoId = props.selectedVideo.id
+  const requestVersion = chatRequestVersion
   sending.value = true
-  const userMessage = { role: 'USER', content: question }
-  const assistantMessage = { role: 'ASSISTANT', content: '', references: [] }
-  messages.value.push(userMessage, assistantMessage)
+  let assistantMessage = null
   try {
-    const sessionId = await ensureSession()
+    if (!(await ensureAgentReady(videoId, requestVersion)) || !isCurrentChatRequest(requestVersion, videoId)) return
+    const question = draft.value.trim()
+    const deepThinking = deepThinkingEnabled.value
+    draft.value = ''
+    const userMessage = { role: 'USER', content: question }
+    assistantMessage = reactive({ role: 'ASSISTANT', content: '', references: [], streaming: true, failed: false })
+    messages.value.push(userMessage, assistantMessage)
+    const sessionId = await ensureSession(videoId, requestVersion)
+    if (!sessionId || !isCurrentChatRequest(requestVersion, videoId)) return
     const answer = await api.streamMessage(
       sessionId,
-      props.selectedVideo.id,
+      videoId,
       question,
       'KNOWLEDGE_EXTENDED',
       'ADVANCED',
-      (delta) => { assistantMessage.content += delta },
-      webSearchEnabled.value
+      (delta) => {
+        if (isCurrentChatRequest(requestVersion, videoId)) assistantMessage.content += delta
+      },
+      webSearchEnabled.value,
+      deepThinking
     )
-    if (!assistantMessage.content && answer?.answer) assistantMessage.content = answer.answer
+    if (!isCurrentChatRequest(requestVersion, videoId)) return
+    if (typeof answer?.answer === 'string') assistantMessage.content = answer.answer
     assistantMessage.references = answer?.references || parseReferences(answer?.referencesJson)
+    assistantMessage.streaming = false
+    sessionList.value = []
   } catch (error) {
-    if (!assistantMessage.content) messages.value.pop()
+    if (!isCurrentChatRequest(requestVersion, videoId)) return
+    if (assistantMessage) {
+      assistantMessage.streaming = false
+      assistantMessage.failed = true
+      if (!assistantMessage.content) messages.value.pop()
+    }
     ElMessage.error(error.message || 'Agent 对话失败')
   } finally {
-    sending.value = false
+    if (isCurrentChatRequest(requestVersion, videoId)) sending.value = false
   }
 }
 
@@ -446,8 +563,10 @@ function videoStatus(video) {
           <small v-if="selectedVideo">正在分析：{{ selectedVideo.originalFilename }}</small>
         </div>
         <div class="agent-header-actions">
-          <button type="button" @click="unavailable('高级历史会话')">历史会话</button>
-          <button type="button" @click="newConversation">新建对话</button>
+          <button type="button" :disabled="sending" @click="toggleHistory">
+            {{ chatView === 'history' ? '返回对话' : '历史会话' }}
+          </button>
+          <button type="button" :disabled="sending" @click="newConversation">新建对话</button>
         </div>
       </header>
 
@@ -466,47 +585,94 @@ function videoStatus(video) {
       </div>
 
       <div class="agent-conversation">
-        <div v-if="!messages.length" class="agent-empty">
-          <div class="agent-mark">VM</div>
-          <h3>围绕当前视频继续探索</h3>
-          <p>高级模式优先使用高级摘要总结知识库；摘要未覆盖细节时，Agent 会回查隐藏的转录原文。</p>
-        </div>
-
-        <section v-if="messages.length" class="advanced-messages" aria-live="polite">
-          <article v-for="(message, messageIndex) in messages" :key="messageIndex" :class="['advanced-message', message.role.toLowerCase()]">
-            <small>{{ message.role === 'USER' ? '你' : 'VideoMind Agent' }}</small>
-            <p>{{ message.content || (sending && messageIndex === messages.length - 1 ? '正在思考…' : '') }}</p>
-            <a v-if="message.downloadUrl" :href="message.downloadUrl" target="_blank" rel="noopener noreferrer">下载生成文件</a>
-            <div v-if="message.references?.length" class="agent-references">
-              <strong>参考来源</strong>
-              <a
-                v-for="(reference, index) in message.references"
-                :key="`${messageIndex}-${index}`"
-                :href="reference.sourceType === 'WEB' ? reference.url : undefined"
-                :target="reference.sourceType === 'WEB' ? '_blank' : undefined"
-                :rel="reference.sourceType === 'WEB' ? 'noopener noreferrer' : undefined"
-              >{{ referenceTitle(reference, index) }}</a>
-            </div>
-          </article>
-        </section>
-
-        <section v-else class="suggestions" data-testid="suggested-questions">
+        <section v-if="chatView === 'history'" class="advanced-history" data-testid="advanced-history">
           <header>
-            <strong>你可能想问</strong>
-            <button type="button" @click="refreshSuggestions">换一换</button>
+            <div>
+              <strong>当前视频的历史会话</strong>
+              <small>查看历史不会调用模型或消耗 Token</small>
+            </div>
+            <button type="button" :disabled="sessionListLoading || historyMessageLoading" @click="loadHistorySessions">刷新</button>
           </header>
-          <button
-            v-for="(question, index) in suggestions"
-            :key="`${suggestionPage}-${index}`"
-            type="button"
-            @click="chooseSuggestion(question)"
-          >
-            <span>{{ index + 1 }}</span>{{ question }}
-          </button>
+          <div v-if="sessionListLoading || historyMessageLoading" class="history-state">
+            {{ historyMessageLoading ? '正在读取 MindAgent 会话内容…' : '正在加载历史会话…' }}
+          </div>
+          <div v-else-if="sessionListError" class="history-state error">
+            <p>{{ sessionListError }}</p>
+            <button type="button" @click="loadHistorySessions">重试</button>
+          </div>
+          <div v-else-if="!sessionList.length" class="history-state">
+            <strong>当前视频还没有高级会话</strong>
+            <span>首次发送问题后，会话才会出现在这里。</span>
+          </div>
+          <div v-else class="history-list">
+            <button
+              v-for="session in sessionList"
+              :key="session.id"
+              type="button"
+              :class="{ active: activeSessionId === session.id }"
+              @click="openHistorySession(session)"
+            >
+              <span class="history-title">
+                <strong>{{ sessionTitle(session) }}</strong>
+                <i v-if="activeSessionId === session.id">当前会话</i>
+              </span>
+              <span class="history-preview">{{ sessionPreview(session) }}</span>
+              <time>{{ formatSessionTime(session.updatedTime || session.createdTime) }}</time>
+            </button>
+          </div>
         </section>
+
+        <template v-else>
+          <div v-if="!messages.length" class="agent-empty">
+            <div class="agent-mark">VM</div>
+            <h3>围绕当前视频继续探索</h3>
+            <p>高级模式优先使用高级摘要总结知识库；摘要未覆盖细节时，Agent 会回查隐藏的转录原文。</p>
+          </div>
+
+          <section v-if="messages.length" class="advanced-messages" aria-live="polite">
+            <article v-for="(message, messageIndex) in messages" :key="messageIndex" :class="['advanced-message', message.role.toLowerCase()]">
+              <small>{{ message.role === 'USER' ? '你' : 'VideoMind Agent' }}</small>
+              <p v-if="message.role === 'USER' || message.streaming || message.failed">
+                {{ message.content || (message.streaming ? '正在思考…' : '') }}
+              </p>
+              <div
+                v-else
+                class="message-markdown research-markdown"
+                v-html="renderSafeMarkdown(message.content || '')"
+              />
+              <small v-if="message.failed" class="message-failed">回答生成中断，以上为已接收的部分正文。</small>
+              <a v-if="message.downloadUrl" :href="message.downloadUrl" target="_blank" rel="noopener noreferrer">下载生成文件</a>
+              <div v-if="message.references?.length" class="agent-references">
+                <strong>参考来源</strong>
+                <a
+                  v-for="(reference, index) in message.references"
+                  :key="`${messageIndex}-${index}`"
+                  :href="reference.sourceType === 'WEB' ? reference.url : undefined"
+                  :target="reference.sourceType === 'WEB' ? '_blank' : undefined"
+                  :rel="reference.sourceType === 'WEB' ? 'noopener noreferrer' : undefined"
+                >{{ referenceTitle(reference, index) }}</a>
+              </div>
+            </article>
+          </section>
+
+          <section v-else class="suggestions" data-testid="suggested-questions">
+            <header>
+              <strong>你可能想问</strong>
+              <button type="button" @click="refreshSuggestions">换一换</button>
+            </header>
+            <button
+              v-for="(question, index) in suggestions"
+              :key="`${suggestionPage}-${index}`"
+              type="button"
+              @click="chooseSuggestion(question)"
+            >
+              <span>{{ index + 1 }}</span>{{ question }}
+            </button>
+          </section>
+        </template>
       </div>
 
-      <div class="advanced-composer">
+      <div v-if="chatView === 'chat'" class="advanced-composer">
         <el-input
           v-model="draft"
           type="textarea"
@@ -519,13 +685,21 @@ function videoStatus(video) {
         <div class="advanced-tools">
           <button class="add-tool" type="button" title="添加附件" @click="unavailable('附件功能')">＋</button>
           <button
-            class="web-search-tool"
+            class="toggle-tool web-search-tool"
             :class="{ active: webSearchEnabled }"
             type="button"
             data-testid="web-search"
             :disabled="!capabilities.web_search || sending"
             @click="toggleWebSearch"
           >◎ 联网搜索</button>
+          <button
+            class="toggle-tool deep-thinking-tool"
+            :class="{ active: deepThinkingEnabled }"
+            type="button"
+            data-testid="deep-thinking"
+            :disabled="!capabilities.advanced_chat || sending"
+            @click="toggleDeepThinking"
+          >◉ 深度思考</button>
           <button type="button" data-testid="ppt-generation" :disabled="!capabilities.ppt_generation || toolBusy" @click="generatePresentation">
             ▣ PPT 生成
           </button>
@@ -789,6 +963,11 @@ function videoStatus(video) {
   font-size: 12px;
 }
 
+.agent-header-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
 .advanced-notice {
   display: grid;
   gap: 5px;
@@ -852,6 +1031,124 @@ function videoStatus(video) {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
+}
+
+.advanced-history {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 100%;
+}
+
+.advanced-history > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 2px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.advanced-history > header div {
+  display: grid;
+  gap: 4px;
+}
+
+.advanced-history > header small,
+.history-state span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.advanced-history > header button,
+.history-state button {
+  padding: 6px 11px;
+  border: 1px solid rgba(231, 185, 111, 0.25);
+  border-radius: 14px;
+  color: var(--gold);
+  background: rgba(231, 185, 111, 0.07);
+  cursor: pointer;
+}
+
+.advanced-history > header button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.history-state {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 180px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.history-state p {
+  max-width: 430px;
+  margin: 0;
+}
+
+.history-state.error {
+  color: #d9a08f;
+}
+
+.history-list {
+  display: grid;
+  gap: 7px;
+}
+
+.history-list > button {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  color: #e7ded1;
+  background: rgba(255, 255, 255, 0.035);
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-list > button:hover,
+.history-list > button.active {
+  border-color: rgba(231, 185, 111, 0.32);
+  background: rgba(231, 185, 111, 0.08);
+}
+
+.history-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.history-title strong,
+.history-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-title i {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--gold);
+  background: rgba(231, 185, 111, 0.12);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.history-preview {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.history-list time {
+  color: rgba(217, 208, 195, 0.55);
+  font-size: 10px;
 }
 
 .advanced-messages {
@@ -1012,11 +1309,31 @@ function videoStatus(video) {
   opacity: 0.38;
 }
 
-.advanced-tools .web-search-tool.active {
+.advanced-tools .toggle-tool.active {
   color: #171008;
   border-color: var(--gold);
   background: var(--gold);
   opacity: 1;
+}
+
+.advanced-message .message-markdown {
+  margin: 0;
+  padding: 10px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 4px 15px 15px 15px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.advanced-message .message-markdown :deep(*:first-child) {
+  margin-top: 0;
+}
+
+.advanced-message .message-markdown :deep(*:last-child) {
+  margin-bottom: 0;
+}
+
+.advanced-message .message-failed {
+  color: #d9a08f;
 }
 
 .advanced-tools button small {

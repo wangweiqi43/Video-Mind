@@ -24,4 +24,6 @@ public class ChatMessageRequest {
     private String applicationMode = "NORMAL";
 
     private Boolean webSearchEnabled = false;
+
+    private Boolean deepThinkingEnabled = false;
 }
