@@ -16,6 +16,7 @@ import com.videomind.module.task.mapper.AiSummaryResultMapper;
 import com.videomind.module.task.mapper.VideoTranscriptionMapper;
 import com.videomind.module.task.mq.VideoAnalyzeMessage;
 import com.videomind.module.knowledge.service.KnowledgeService;
+import com.videomind.module.knowledge.timeline.VideoTimelinePipeline;
 import com.videomind.module.agent.service.MindAgentVideoSyncService;
 import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.task.service.VideoAnalyzeProcessorService;
@@ -48,6 +49,7 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
     private final VideoTranscriptionMapper videoTranscriptionMapper;
     private final AiSummaryResultMapper aiSummaryResultMapper;
     private final KnowledgeService knowledgeService;
+    private final VideoTimelinePipeline videoTimelinePipeline;
     private final MindAgentVideoSyncService mindAgentVideoSyncService;
     private final RedissonClient redissonClient;
 
@@ -98,6 +100,7 @@ public class VideoAnalyzeProcessorServiceImpl implements VideoAnalyzeProcessorSe
                 savedTranscription = saveTranscription(taskRecord, asrResult);
             }
             int transcriptVersion = updateTranscriptVersion(videoFile, savedTranscription.created());
+            videoTimelinePipeline.build(taskRecord, videoFile, transcriptVersion, asrResult);
             if ("ADVANCED".equals(mode)) {
                 mindAgentVideoSyncService.sync(videoFile.getId(), message.getUserId(), taskRecord.getId());
                 log.info("Advanced analysis dispatched to Agent Platform, taskId={}, transcriptVersion={}",

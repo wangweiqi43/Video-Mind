@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.videomind.common.enums.TaskStatus;
 import com.videomind.module.agent.service.MindAgentVideoSyncService;
 import com.videomind.module.knowledge.service.KnowledgeService;
+import com.videomind.module.knowledge.timeline.VideoTimelinePipeline;
 import com.videomind.module.task.analysis.AudioExtractorClient;
 import com.videomind.module.task.analysis.SpeechToTextClient;
 import com.videomind.module.task.analysis.VideoSummaryClient;
@@ -40,11 +41,12 @@ class VideoAnalyzeProcessorModeIsolationTest {
     private final VideoTranscriptionMapper transcriptions = mock(VideoTranscriptionMapper.class);
     private final AiSummaryResultMapper summaryResults = mock(AiSummaryResultMapper.class);
     private final KnowledgeService knowledge = mock(KnowledgeService.class);
+    private final VideoTimelinePipeline timeline = mock(VideoTimelinePipeline.class);
     private final MindAgentVideoSyncService agentSync = mock(MindAgentVideoSyncService.class);
     private final RedissonClient redisson = mock(RedissonClient.class);
     private final RLock lock = mock(RLock.class);
     private final VideoAnalyzeProcessorServiceImpl processor = new VideoAnalyzeProcessorServiceImpl(
-            tasks, videos, audio, asr, summaries, transcriptions, summaryResults, knowledge, agentSync, redisson);
+            tasks, videos, audio, asr, summaries, transcriptions, summaryResults, knowledge, timeline, agentSync, redisson);
 
     private TaskRecord task;
     private VideoFile video;
