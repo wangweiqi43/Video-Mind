@@ -59,6 +59,9 @@ management:
       show-details: never
 
 videomind:
+  agent:
+    workflow:
+      decision-timeout-millis: ${AGENT_DECISION_TIMEOUT_MILLIS:10000}
   auth:
     jwt-secret: ${VIDEOMIND_JWT_SECRET}
     access-minutes: ${VIDEOMIND_ACCESS_MINUTES:15}

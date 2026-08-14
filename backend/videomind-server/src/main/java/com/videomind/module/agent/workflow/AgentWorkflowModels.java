@@ -1,20 +1,34 @@
 package com.videomind.module.agent.workflow;
 
 import com.videomind.module.knowledge.retrieval.Evidence;
-import java.time.Duration;
 import java.util.List;
 
 public final class AgentWorkflowModels {
     private AgentWorkflowModels() {
     }
 
-    public record Request(Long userId, List<Long> knowledgeBaseIds, String question,
-                          int maxToolCalls, Duration deadline) {
+    public record Request(Long userId, List<Long> knowledgeBaseIds, String question, Mode mode) {
         public Request {
             knowledgeBaseIds = knowledgeBaseIds == null ? List.of() : List.copyOf(knowledgeBaseIds);
-            maxToolCalls = maxToolCalls <= 0 ? 4 : maxToolCalls;
-            deadline = deadline == null ? Duration.ofSeconds(30) : deadline;
+            mode = mode == null ? Mode.STANDARD : mode;
         }
+
+        public int maxToolCalls() {
+            return mode == Mode.DEEP ? 6 : 2;
+        }
+
+        public int maxReplans() {
+            return mode == Mode.DEEP ? 2 : 1;
+        }
+
+        public java.time.Duration deadline() {
+            return java.time.Duration.ofSeconds(mode == Mode.DEEP ? 60 : 20);
+        }
+    }
+
+    public enum Mode {
+        STANDARD,
+        DEEP
     }
 
     public record Plan(String route, List<Step> steps, int generation) {

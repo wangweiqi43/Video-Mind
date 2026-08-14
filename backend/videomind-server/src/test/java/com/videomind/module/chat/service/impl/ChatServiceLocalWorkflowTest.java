@@ -99,6 +99,8 @@ class ChatServiceLocalWorkflowTest {
                 ArgumentCaptor.forClass(AgentWorkflowModels.Request.class);
         verify(workflow).run(workflowRequest.capture());
         assertThat(workflowRequest.getValue().knowledgeBaseIds()).containsExactly(10L, 20L);
+        assertThat(workflowRequest.getValue().mode()).isEqualTo(AgentWorkflowModels.Mode.STANDARD);
+        assertThat(workflowRequest.getValue().maxToolCalls()).isEqualTo(2);
         verify(contexts).refreshContext(13L, 99L, List.of(10L, 20L));
     }
 

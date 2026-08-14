@@ -26,7 +26,6 @@ import com.videomind.module.chat.support.ConversationTurnAssembler;
 import com.videomind.module.knowledge.retrieval.Evidence;
 import com.videomind.module.knowledge.service.KnowledgeBaseService;
 import com.videomind.module.video.service.VideoFileService;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -157,7 +156,7 @@ public class ChatServiceImpl implements ChatService {
         List<Long> scope = sessionScope(session, userId);
         boolean deep = Boolean.TRUE.equals(request.getDeepThinkingEnabled());
         AgentWorkflowModels.Result result = workflow.run(new AgentWorkflowModels.Request(userId, scope,
-                request.getQuestion(), deep ? 4 : 2, Duration.ofSeconds(deep ? 45 : 20)));
+                request.getQuestion(), deep ? AgentWorkflowModels.Mode.DEEP : AgentWorkflowModels.Mode.STANDARD));
         return result.evidence().stream().map(evidence -> reference(evidence, session.getVideoId())).toList();
     }
 
