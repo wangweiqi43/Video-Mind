@@ -5,7 +5,7 @@ import com.videomind.common.context.MockUserContext;
 import com.videomind.module.knowledge.dto.KnowledgeBaseCreateRequest;
 import com.videomind.module.knowledge.dto.KnowledgeBaseResponse;
 import com.videomind.module.knowledge.dto.DocumentUploadResponse;
-import com.videomind.module.knowledge.service.DocumentUploadService;
+import com.videomind.module.knowledge.service.KnowledgeDocumentApplicationService;
 import com.videomind.module.knowledge.service.KnowledgeBaseService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -26,7 +26,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 public class KnowledgeBaseController {
     private final KnowledgeBaseService service;
-    private final DocumentUploadService documentUploadService;
+    private final KnowledgeDocumentApplicationService documentApplicationService;
 
     @PostMapping
     public ApiResponse<KnowledgeBaseResponse> create(@Valid @RequestBody KnowledgeBaseCreateRequest request) {
@@ -46,7 +46,7 @@ public class KnowledgeBaseController {
     @PostMapping(value = "/{knowledgeBaseId}/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<DocumentUploadResponse> upload(@PathVariable Long knowledgeBaseId,
                                                        @RequestPart("file") MultipartFile file) {
-        return ApiResponse.success(documentUploadService.upload(
+        return ApiResponse.success(documentApplicationService.uploadAndDispatch(
                 MockUserContext.currentUserId(), knowledgeBaseId, file));
     }
 

@@ -196,6 +196,6 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
                                                    boolean duplicated) {
         return new DocumentUploadResponse(document.getId(), version == null ? null : version.getId(),
                 document.getTitle(), document.getSha256(), document.getStatus(),
-                version == null ? null : version.getProcessingStage(), duplicated);
+                version == null ? null : version.getProcessingStage(), duplicated, null, null, false);
     }
 }

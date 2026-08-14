@@ -9,5 +9,13 @@ public record DocumentUploadResponse(
         String sha256,
         KnowledgeLifecycleStatus status,
         String processingStage,
-        boolean duplicated) {
+        boolean duplicated,
+        String eventId,
+        Long taskId,
+        boolean reusedTask) {
+
+    public DocumentUploadResponse withDispatch(String newEventId, Long newTaskId, boolean newReusedTask) {
+        return new DocumentUploadResponse(documentId, versionId, title, sha256, status, processingStage,
+                duplicated, newEventId, newTaskId, newReusedTask);
+    }
 }
