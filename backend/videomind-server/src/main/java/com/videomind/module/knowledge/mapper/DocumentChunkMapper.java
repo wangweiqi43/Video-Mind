@@ -24,4 +24,12 @@ public interface DocumentChunkMapper extends BaseMapper<DocumentChunk> {
              WHERE document_version_id = #{documentVersionId} AND published = 0
             """)
     int publishVersion(@Param("documentVersionId") Long documentVersionId);
+
+    @Update("""
+            UPDATE document_chunk SET published = 0
+             WHERE document_id = #{documentId} AND document_version_id <> #{currentVersionId}
+               AND published = 1
+            """)
+    int unpublishOtherVersions(@Param("documentId") Long documentId,
+                               @Param("currentVersionId") Long currentVersionId);
 }

@@ -135,6 +135,17 @@ public class ElasticsearchGateway implements HybridSearchGateway, KnowledgeIndex
                 + "/_delete_by_query?refresh=true&conflicts=proceed", body, "application/json");
     }
 
+    @Override
+    public void deleteOtherVersions(Long documentId, Long currentVersionId) {
+        ObjectNode bool = mapper.createObjectNode();
+        bool.putArray("filter").addObject().putObject("term").put("documentId", documentId);
+        bool.putArray("must_not").addObject().putObject("term").put("documentVersionId", currentVersionId);
+        ObjectNode body = mapper.createObjectNode();
+        body.putObject("query").set("bool", bool);
+        request("POST", "/" + properties.getIndexAlias()
+                + "/_delete_by_query?refresh=true&conflicts=proceed", body, "application/json");
+    }
+
     static ObjectNode indexDefinition(ObjectMapper mapper, int dimension) {
         ObjectNode root = mapper.createObjectNode();
         root.putObject("settings").put("index.refresh_interval", "1s");
