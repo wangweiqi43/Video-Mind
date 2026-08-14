@@ -1155,3 +1155,5 @@ h3 {
     transform: rotate(360deg);
   }
 }
+/* Fixed knowledge scope for the local VideoMind chat workflow. */
+.knowledge-scope-panel{display:grid;gap:10px;margin-bottom:12px;padding:12px;border:1px solid #3b3528;border-radius:10px;background:#11110f}.knowledge-scope-head,.knowledge-scope-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.knowledge-scope-head>div:first-child{display:grid;gap:3px}.knowledge-scope-head small,.knowledge-scope-panel>small{color:#77736b}.knowledge-scope-row{padding:7px 0;border-top:1px solid #292720}.knowledge-scope-row:first-child{border-top:0}

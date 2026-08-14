@@ -79,14 +79,14 @@ export const api = {
   completeMultipartUpload(uploadId) {
     return http.post(`/videos/multipart/${uploadId}/complete`)
   },
-  analyze(videoId, autoVectorize, applicationMode = 'NORMAL') {
-    return http.post('/tasks/analyze', { videoId, autoVectorize, applicationMode })
+  analyze(videoId) {
+    return http.post('/tasks/analyze', { videoId })
   },
   getTask(taskId) {
     return http.get(`/tasks/${taskId}`)
   },
-  getLatestSuccessfulTask(videoId, applicationMode = 'NORMAL') {
-    return http.get(`/tasks/video/${videoId}/latest-success`, { params: { applicationMode } })
+  getLatestSuccessfulTask(videoId) {
+    return http.get(`/tasks/video/${videoId}/latest-success`)
   },
   getTaskResult(taskId) {
     return http.get(`/tasks/${taskId}/result`)
@@ -97,17 +97,17 @@ export const api = {
   vectorStatus(taskId) {
     return http.get(`/knowledge/status/${taskId}`)
   },
-  createSession(videoId, applicationMode = 'NORMAL') {
-    return http.post('/chat/session', { videoId, applicationMode })
+  createSession(videoId, knowledgeBaseIds = []) {
+    return http.post('/chat/session', { videoId, knowledgeBaseIds })
   },
-  listSessions(videoId, applicationMode = 'NORMAL') {
-    return http.get('/chat/session/list', { params: { videoId, applicationMode } })
+  listSessions(videoId) {
+    return http.get('/chat/session/list', { params: { videoId } })
   },
-  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', applicationMode = 'NORMAL', webSearchEnabled = false, deepThinkingEnabled = false) {
-    return http.post('/chat/message', { sessionId, videoId, question, answerScope, applicationMode, webSearchEnabled, deepThinkingEnabled })
+  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', webSearchEnabled = false, deepThinkingEnabled = false) {
+    return http.post('/chat/message', { sessionId, videoId, question, answerScope, webSearchEnabled, deepThinkingEnabled })
   },
-  streamMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled = false, deepThinkingEnabled = false) {
-    return streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled, deepThinkingEnabled)
+  streamMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled = false, deepThinkingEnabled = false) {
+    return streamChatMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled, deepThinkingEnabled)
   },
   listMessages(sessionId, videoId) {
     return http.get(`/chat/session/${sessionId}/messages`, { params: { videoId } })
@@ -132,16 +132,29 @@ export const api = {
   },
   getCapabilities() {
     return http.get('/v1/system/capabilities')
+  },
+  listKnowledgeBases() {
+    return http.get('/knowledge-bases')
+  },
+  createKnowledgeBase(name) {
+    return http.post('/knowledge-bases', { name })
+  },
+  uploadKnowledgeDocument(knowledgeBaseId, file, onUploadProgress) {
+    const form = new FormData()
+    form.append('file', file)
+    return http.post(`/knowledge-bases/${knowledgeBaseId}/documents`, form, { onUploadProgress })
+  },
+  deleteKnowledgeBase(knowledgeBaseId) {
+    return http.delete(`/knowledge-bases/${knowledgeBaseId}`)
   }
 }
 
-function streamChatMessage(sessionId, videoId, question, answerScope, applicationMode, onDelta, webSearchEnabled = false, deepThinkingEnabled = false) {
+function streamChatMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled = false, deepThinkingEnabled = false) {
   const params = new URLSearchParams({
     sessionId: String(sessionId),
     videoId: String(videoId),
     question,
     answerScope,
-    applicationMode,
     webSearchEnabled: String(Boolean(webSearchEnabled)),
     deepThinkingEnabled: String(Boolean(deepThinkingEnabled))
   })

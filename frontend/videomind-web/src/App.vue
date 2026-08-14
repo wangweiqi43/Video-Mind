@@ -3,33 +3,16 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SparkMD5 from 'spark-md5'
 import { api } from './api'
-import ModeSwitcher from './components/ModeSwitcher.vue'
-import AdvancedModeLayout from './components/AdvancedModeLayout.vue'
 import VideoControlPanel from './components/VideoControlPanel.vue'
+import { selectableKnowledgeBases, selectedDocumentScope } from './knowledgeScope'
 
 const state = reactive({
   videos: [],
-  appMode: readInitialMode(),
-  capabilities: {
-    normal_chat: true,
-    knowledge_extended: true,
-    advanced_mode: true,
-    agent_enabled: false,
-    agent_ingest: false,
-    advanced_chat: false,
-    web_search: false,
-    advanced_report: false,
-    ppt_generation: false,
-    report_export_pdf: false,
-    report_export_docx: false,
-    suggested_questions: false
-  },
   selectedVideo: null,
   videoListRefreshing: false,
   uploadProgress: 0,
   uploading: false,
   taskLoading: false,
-  autoVectorize: true,
   resultLoading: false,
   resultRefreshing: false,
   resultView: 'summary',
@@ -45,7 +28,11 @@ const state = reactive({
   messages: [],
   question: '',
   answerScope: 'KNOWLEDGE_EXTENDED',
-  loadingChat: false
+  loadingChat: false,
+  knowledgeBases: [],
+  selectedKnowledgeBaseIds: [],
+  knowledgeLoading: false,
+  knowledgeUploadingId: null
 })
 
 const transcriptDialog = reactive({
@@ -67,6 +54,7 @@ const VIDEO_CHAT_SESSION_KEY = 'videomind:video-chat-sessions'
 
 const canAnalyze = computed(() => Boolean(state.selectedVideo?.id) && !state.taskLoading)
 const canSendQuestion = computed(() => Boolean(state.selectedVideo?.id) && !state.loadingChat && !state.sessionDetailLoading)
+const documentKnowledgeBases = computed(() => selectableKnowledgeBases(state.knowledgeBases, state.selectedVideo?.id))
 const chatPlaceholder = computed(() => {
   if (!state.selectedVideo?.id) return '请先选择一个视频，再针对该视频内容提问...'
   return `正在针对《${state.selectedVideo.originalFilename}》提问...`
@@ -88,38 +76,15 @@ const transcriptDialogStatus = computed(() => {
   if (transcriptDialog.error) return transcriptDialog.error
   if (transcriptDialog.data?.status === 'READY' && transcriptDialog.data?.transcriptionText) return ''
   const taskStatus = String(state.task?.taskStatus || '').toUpperCase()
-  if (state.task?.analysisMode === 'ADVANCED' && ['PENDING', 'PROCESSING', 'RETRYING'].includes(taskStatus)) {
+  if (['PENDING', 'PROCESSING', 'RETRYING'].includes(taskStatus)) {
     return '视频转录处理中，完成后重新打开即可查看。'
   }
   return '尚未生成转录文本，请先点击“生成高级摘要总结”。'
 })
 
 onMounted(async () => {
-  await Promise.all([loadVideos(), loadCapabilities()])
+  await Promise.all([loadVideos(), loadKnowledgeBases()])
 })
-
-function readInitialMode() {
-  const queryMode = new URLSearchParams(window.location.search).get('mode')
-  if (['normal', 'advanced'].includes(queryMode)) return queryMode
-  return localStorage.getItem('videomind:application-mode') === 'advanced' ? 'advanced' : 'normal'
-}
-
-async function switchMode(mode) {
-  transcriptDialog.visible = false
-  state.appMode = mode
-  localStorage.setItem('videomind:application-mode', mode)
-  const url = new URL(window.location.href)
-  url.searchParams.set('mode', mode)
-  window.history.replaceState({}, '', url)
-  activePollTaskId.value = null
-  state.task = null
-  state.taskResult = null
-  state.vectorStatus = null
-  if (mode === 'normal' && state.selectedVideo?.id) {
-    state.resultLoading = true
-    try { await loadLatestTaskForVideo(state.selectedVideo.id) } finally { state.resultLoading = false }
-  }
-}
 
 async function loadCapabilities() {
   try {
@@ -161,13 +126,7 @@ async function selectVideo(video) {
   state.chatView = 'chat'
   state.sessionListError = ''
   state.resultLoading = true
-  const tasks = [loadSessions(video.id)]
-  if (state.appMode === 'normal') tasks.push(loadLatestTaskForVideo(video.id))
-  else {
-    state.task = null
-    state.taskResult = null
-    state.vectorStatus = null
-  }
+  const tasks = [loadSessions(video.id), loadLatestTaskForVideo(video.id), loadKnowledgeBases()]
   await Promise.all(tasks)
   if (state.selectedVideo?.id === video.id) {
     await openVideoSession(video.id)
@@ -177,7 +136,7 @@ async function selectVideo(video) {
 
 async function loadLatestTaskForVideo(videoId) {
   try {
-    const task = await api.getLatestSuccessfulTask(videoId, 'NORMAL')
+    const task = await api.getLatestSuccessfulTask(videoId)
     if (!task) {
       state.task = null
       state.taskResult = null
@@ -319,11 +278,10 @@ async function createAnalyzeTask() {
   state.taskLoading = true
   state.resultLoading = true
   try {
-    const mode = state.appMode === 'advanced' ? 'ADVANCED' : 'NORMAL'
-    const task = await api.analyze(state.selectedVideo.id, mode === 'NORMAL' && state.autoVectorize, mode)
-    state.task = { id: task.taskId, taskStatus: task.status, reused: task.reused, analysisMode: mode }
+    const task = await api.analyze(state.selectedVideo.id)
+    state.task = { id: task.taskId, taskStatus: task.status, reused: task.reused }
     if (task.status === 'SUCCESS') {
-      await refreshTaskOutcome(task.taskId, mode)
+      await refreshTaskOutcome(task.taskId)
       return
     }
     state.taskResult = null
@@ -358,7 +316,7 @@ async function pollTask(taskId) {
     const task = await api.getTask(taskId)
     state.task = task
     if (task.taskStatus === 'SUCCESS') {
-      await refreshTaskOutcome(taskId, task.analysisMode || state.task?.analysisMode || 'NORMAL')
+      await refreshTaskOutcome(taskId)
       activePollTaskId.value = null
       return
     }
@@ -379,14 +337,52 @@ async function pollTask(taskId) {
   }
 }
 
-async function refreshTaskOutcome(taskId, mode = state.task?.analysisMode || 'NORMAL') {
-  if (String(mode).toUpperCase() === 'ADVANCED') {
-    state.taskResult = null
-    state.vectorStatus = null
-    await refreshSelectedVideoMetadata()
-    return
-  }
+async function refreshTaskOutcome(taskId) {
   await Promise.all([loadTaskResult(taskId), loadVectorStatus(taskId), refreshSelectedVideoMetadata()])
+}
+
+async function loadKnowledgeBases() {
+  state.knowledgeLoading = true
+  try {
+    state.knowledgeBases = await api.listKnowledgeBases()
+    const readyIds = new Set(documentKnowledgeBases.value
+      .filter((item) => item.selectable)
+      .map((item) => Number(item.id)))
+    state.selectedKnowledgeBaseIds = state.selectedKnowledgeBaseIds
+      .map(Number)
+      .filter((id) => readyIds.has(id))
+  } catch (error) {
+    ElMessage.warning(error.message || '知识库列表加载失败')
+  } finally {
+    state.knowledgeLoading = false
+  }
+}
+
+async function createKnowledgeBase() {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入知识库名称', '新建文档知识库', {
+      confirmButtonText: '创建', cancelButtonText: '取消', inputPattern: /\S+/, inputErrorMessage: '名称不能为空'
+    })
+    const created = await api.createKnowledgeBase(value.trim())
+    await loadKnowledgeBases()
+    ElMessage.success(`知识库“${created.name}”已创建，请上传附件`)
+  } catch (error) {
+    if (error === 'cancel' || error?.message === 'cancel') return
+    ElMessage.error(error.message || '知识库创建失败')
+  }
+}
+
+async function uploadKnowledgeDocument(options, knowledgeBase) {
+  state.knowledgeUploadingId = knowledgeBase.id
+  try {
+    await api.uploadKnowledgeDocument(knowledgeBase.id, options.file)
+    ElMessage.success('附件已提交，本机 MinerU 正在解析')
+    await loadKnowledgeBases()
+  } catch (error) {
+    ElMessage.error(error.message || '附件上传失败')
+  } finally {
+    state.knowledgeUploadingId = null
+  }
 }
 
 async function openTranscriptDialog() {
@@ -509,7 +505,7 @@ async function createSession() {
   if (!videoId || state.sessionDetailLoading) return
   state.sessionDetailLoading = true
   try {
-    const session = await api.createSession(videoId)
+    const session = await api.createSession(videoId, state.selectedKnowledgeBaseIds)
     if (state.selectedVideo?.id !== videoId) return
     saveVideoSessionId(videoId, session.sessionId)
     await loadSessions(videoId)
@@ -519,6 +515,14 @@ async function createSession() {
   } finally {
     state.sessionDetailLoading = false
   }
+}
+
+function prepareNewSession() {
+  if (state.loadingChat || state.sessionDetailLoading) return
+  state.activeSessionId = null
+  state.messages = []
+  state.chatView = 'chat'
+  if (state.selectedVideo?.id) removeVideoSessionId(state.selectedVideo.id)
 }
 
 async function openSession(sessionId, videoId = state.selectedVideo?.id, fromHistory = false) {
@@ -534,6 +538,8 @@ async function openSession(sessionId, videoId = state.selectedVideo?.id, fromHis
     const messages = await api.listMessages(sessionId, videoId)
     if (requestId === detailRequestId.value && state.selectedVideo?.id === videoId) {
       state.messages = messages
+      const session = state.sessions.find((item) => item.id === Number(sessionId))
+      if (session) state.selectedKnowledgeBaseIds = selectedDocumentScope(session, state.knowledgeBases)
       saveVideoSessionId(videoId, sessionId)
     }
   } catch (error) {
@@ -610,7 +616,6 @@ async function sendQuestion() {
       state.selectedVideo.id,
       question,
       state.answerScope,
-      'NORMAL',
       (delta) => {
       typewriter.push(delta)
       }
@@ -860,12 +865,11 @@ function compactParagraphs(lines) {
 <template>
   <main class="shell">
     <header class="brand">
-      <ModeSwitcher :model-value="state.appMode" @update:model-value="switchMode" />
       <h1>VideoMind</h1>
       <p>太长不看？🤔 不看我看！😊</p>
     </header>
 
-    <section v-show="state.appMode === 'normal'" class="app-layout" data-testid="normal-layout">
+    <section class="app-layout" data-testid="local-layout">
       <aside class="panel library-card">
         <div class="section-head">
           <div>
@@ -911,15 +915,10 @@ function compactParagraphs(lines) {
           :can-analyze="canAnalyze"
           :task-loading="state.taskLoading"
           :task="state.task"
-          :vector-status="state.vectorStatus"
-          :auto-vectorize="state.autoVectorize"
-          application-mode="NORMAL"
           @upload="handleUpload"
           @analyze="createAnalyzeTask"
           @play="playCurrentVideo"
           @show-transcript="openTranscriptDialog"
-          @toggle-auto-vectorize="state.autoVectorize = !state.autoVectorize"
-          @vectorize="vectorizeCurrentTask"
         />
 
         <section class="workspace">
@@ -1007,7 +1006,7 @@ function compactParagraphs(lines) {
               class="ghost-button"
               round
               :disabled="!state.selectedVideo?.id || state.sessionDetailLoading"
-              @click="createSession"
+              @click="prepareNewSession"
             >
               新建对话
             </el-button>
@@ -1029,7 +1028,7 @@ function compactParagraphs(lines) {
           <div v-else-if="!state.sessions.length" class="history-state">
             <h3>当前视频还没有历史会话</h3>
             <p>开始一次新对话后，会话将显示在这里</p>
-            <el-button class="gold-button" round @click="createSession">新建会话</el-button>
+            <el-button class="gold-button" round @click="prepareNewSession">新建会话</el-button>
           </div>
           <div
             v-else
@@ -1091,6 +1090,34 @@ function compactParagraphs(lines) {
                   </div>
                 </div>
                 <div class="composer">
+                  <div class="knowledge-scope-panel">
+                    <div class="knowledge-scope-head">
+                      <div>
+                        <strong>会话知识库范围</strong>
+                        <small>视频时间轴自动绑定；可附加多个文档知识库，新建会话后范围固定。</small>
+                      </div>
+                      <div>
+                        <el-button size="small" :loading="state.knowledgeLoading" @click="loadKnowledgeBases">刷新</el-button>
+                        <el-button size="small" type="primary" @click="createKnowledgeBase">新建知识库</el-button>
+                      </div>
+                    </div>
+                    <el-checkbox-group v-model="state.selectedKnowledgeBaseIds" :disabled="Boolean(state.activeSessionId)">
+                      <div v-for="knowledgeBase in documentKnowledgeBases" :key="knowledgeBase.id" class="knowledge-scope-row">
+                        <el-checkbox :value="Number(knowledgeBase.id)" :disabled="!knowledgeBase.selectable">
+                          {{ knowledgeBase.name }} · {{ knowledgeBase.status }} · {{ knowledgeBase.documentCount }} 个文档
+                        </el-checkbox>
+                        <el-upload
+                          :show-file-list="false"
+                          :http-request="(options) => uploadKnowledgeDocument(options, knowledgeBase)"
+                          accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.html,.htm"
+                        >
+                          <el-button size="small" :loading="state.knowledgeUploadingId === knowledgeBase.id">上传附件</el-button>
+                        </el-upload>
+                      </div>
+                    </el-checkbox-group>
+                    <small v-if="!documentKnowledgeBases.length">尚无文档知识库。先新建知识库，再上传附件。</small>
+                    <small v-if="state.activeSessionId">当前会话范围已锁定；如需更换知识库，请新建会话。</small>
+                  </div>
                   <div class="answer-scope">
                     <span>回答范围</span>
                     <el-radio-group v-model="state.answerScope" size="small">
@@ -1123,36 +1150,6 @@ function compactParagraphs(lines) {
         </section>
       </section>
     </section>
-
-    <AdvancedModeLayout
-      v-show="state.appMode === 'advanced'"
-      :active="state.appMode === 'advanced'"
-      :videos="state.videos"
-      :selected-video="state.selectedVideo"
-      :capabilities="state.capabilities"
-      :analysis-running="state.task?.analysisMode === 'ADVANCED' && !['SUCCESS', 'FAILED'].includes(state.task?.taskStatus)"
-      @select-video="selectVideo"
-    >
-      <template #toolbar>
-        <VideoControlPanel
-          :selected-video="state.selectedVideo"
-          :uploading="state.uploading"
-          :upload-progress="state.uploadProgress"
-          :can-analyze="canAnalyze"
-          :task-loading="state.taskLoading"
-          :task="state.task"
-          :vector-status="state.vectorStatus"
-          :auto-vectorize="state.autoVectorize"
-          application-mode="ADVANCED"
-          @upload="handleUpload"
-          @analyze="createAnalyzeTask"
-          @play="playCurrentVideo"
-          @show-transcript="openTranscriptDialog"
-          @toggle-auto-vectorize="state.autoVectorize = !state.autoVectorize"
-          @vectorize="vectorizeCurrentTask"
-        />
-      </template>
-    </AdvancedModeLayout>
 
     <el-dialog
       v-model="transcriptDialog.visible"
