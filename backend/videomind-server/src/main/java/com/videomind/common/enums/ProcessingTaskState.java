@@ -4,11 +4,13 @@ public enum ProcessingTaskState {
     PENDING,
     PROCESSING,
     RETRY_WAIT,
+    CANCEL_REQUESTED,
+    CANCELLED,
     SUCCESS,
     FAILED,
     DEAD;
 
     public boolean terminal() {
-        return this == SUCCESS || this == FAILED || this == DEAD;
+        return this == CANCELLED || this == SUCCESS || this == FAILED || this == DEAD;
     }
 }

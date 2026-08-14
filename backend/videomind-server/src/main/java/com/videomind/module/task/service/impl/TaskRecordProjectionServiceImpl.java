@@ -37,9 +37,10 @@ public class TaskRecordProjectionServiceImpl implements TaskRecordProjectionServ
         if (status == TaskStatus.RETRYING) {
             target.setRetryCount(Math.max(value(target.getRetryCount()), value(source.getAttemptCount())));
             target.setErrorMessage(source.getErrorMessage());
-        } else if (status == TaskStatus.FAILED) {
+        } else if (status == TaskStatus.FAILED || status == TaskStatus.CANCELLED) {
             target.setRetryCount(Math.max(value(target.getRetryCount()), Math.max(0, value(source.getAttemptCount()) - 1)));
-            target.setErrorMessage(source.getErrorMessage() == null ? source.getErrorCode() : source.getErrorMessage());
+            target.setErrorMessage(status == TaskStatus.CANCELLED ? null
+                    : source.getErrorMessage() == null ? source.getErrorCode() : source.getErrorMessage());
             target.setFinishedTime(source.getFinishedTime() == null ? LocalDateTime.now() : source.getFinishedTime());
         } else if (status == TaskStatus.SUCCESS) {
             target.setErrorMessage(null);
@@ -59,6 +60,8 @@ public class TaskRecordProjectionServiceImpl implements TaskRecordProjectionServ
             case PENDING -> TaskStatus.PENDING;
             case PROCESSING -> TaskStatus.PROCESSING;
             case RETRY_WAIT -> TaskStatus.RETRYING;
+            case CANCEL_REQUESTED -> TaskStatus.CANCEL_REQUESTED;
+            case CANCELLED -> TaskStatus.CANCELLED;
             case SUCCESS -> TaskStatus.SUCCESS;
             case FAILED, DEAD -> TaskStatus.FAILED;
         };

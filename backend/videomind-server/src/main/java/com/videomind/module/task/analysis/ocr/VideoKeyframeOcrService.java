@@ -3,6 +3,7 @@ package com.videomind.module.task.analysis.ocr;
 import com.videomind.config.OcrProperties;
 import com.videomind.module.knowledge.timeline.TimelineFusionService.OcrObservation;
 import com.videomind.module.task.entity.TaskRecord;
+import com.videomind.module.task.service.TaskCancellationGuard;
 import com.videomind.module.video.entity.VideoFile;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -15,11 +16,14 @@ public class VideoKeyframeOcrService {
     private final KeyframeExtractor extractor;
     private final FrameOcrClient ocrClient;
     private final OcrProperties properties;
+    private final TaskCancellationGuard cancellation;
 
-    public VideoKeyframeOcrService(KeyframeExtractor extractor, FrameOcrClient ocrClient, OcrProperties properties) {
+    public VideoKeyframeOcrService(KeyframeExtractor extractor, FrameOcrClient ocrClient, OcrProperties properties,
+                                   TaskCancellationGuard cancellation) {
         this.extractor = extractor;
         this.ocrClient = ocrClient;
         this.properties = properties;
+        this.cancellation = cancellation;
     }
 
     public List<OcrObservation> recognize(VideoFile videoFile, TaskRecord taskRecord) {
@@ -27,7 +31,9 @@ public class VideoKeyframeOcrService {
         List<OcrObservation> observations = new ArrayList<>();
         for (Keyframe frame : frames) {
             try {
+                cancellation.checkVideoTask(taskRecord.getId());
                 FrameOcrClient.OcrText result = ocrClient.recognize(frame.imagePath());
+                cancellation.checkVideoTask(taskRecord.getId());
                 if (StringUtils.hasText(result.text())) {
                     observations.add(new OcrObservation(frame.timestampMs(),
                             frame.timestampMs() + properties.getMaxIntervalSeconds() * 1_000L,

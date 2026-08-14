@@ -25,6 +25,7 @@ import com.videomind.module.knowledge.retrieval.KnowledgeIndexGateway.IndexedChu
 import com.videomind.module.knowledge.retrieval.RetrievalCandidate;
 import com.videomind.module.task.service.ProcessingTaskHandler;
 import com.videomind.module.task.service.TaskCheckpointService;
+import com.videomind.module.task.service.TaskCancellationGuard;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -56,6 +57,7 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
     private final TaskCheckpointService checkpoints;
     private final AiProperties aiProperties;
     private final ObjectMapper objectMapper;
+    private final TaskCancellationGuard cancellation;
 
     @Override
     public ProcessingTaskType type() {
@@ -64,6 +66,7 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
 
     @Override
     public String handle(TaskExecutionContext context) throws Exception {
+        cancellation.checkProcessingTask(context.taskId());
         Long documentId = context.command().businessId();
         Long versionId = longPayload(context.command().payload(), "versionId");
         KnowledgeDocument document = requireDocument(documentId, context.command().userId());
@@ -71,11 +74,13 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
 
         if (!checkpoints.isCompleted(context.taskId(), "PARSED")) {
             parse(context.taskId(), document, version);
+            cancellation.checkProcessingTask(context.taskId());
             checkpoints.complete(context.taskId(), "PARSED", artifact(version), markdownChecksum(version));
         }
         String markdown = readMarkdown(version);
 
         if (!checkpoints.isCompleted(context.taskId(), "CHUNKED")) {
+            cancellation.checkProcessingTask(context.taskId());
             persistChunks(document, version, markdown);
             checkpoints.complete(context.taskId(), "CHUNKED", "{\"versionId\":" + version.getId() + "}",
                     sha256((version.getId() + ":" + markdown).getBytes(StandardCharsets.UTF_8)));
@@ -86,12 +91,14 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
         }
 
         if (!checkpoints.isCompleted(context.taskId(), "INDEXED")) {
+            cancellation.checkProcessingTask(context.taskId());
             stageIndex(document, version, values);
             checkpoints.complete(context.taskId(), "INDEXED", "{\"chunkCount\":" + values.size() + "}",
                     chunkSetChecksum(values));
         }
 
         if (!checkpoints.isCompleted(context.taskId(), "PUBLISHED")) {
+            cancellation.checkProcessingTask(context.taskId());
             publish(document, version, values.size());
             checkpoints.complete(context.taskId(), "PUBLISHED", "{\"chunkCount\":" + values.size() + "}",
                     chunkSetChecksum(values));
@@ -117,6 +124,11 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
                             version.setUpdatedTime(LocalDateTime.now());
                             versions.updateById(version);
                         }
+
+                        @Override
+                        public void beforePoll(String mineruTaskId) {
+                            cancellation.checkProcessingTask(taskId);
+                        }
                     });
             markdown = result.content();
             parser = result.parser();
@@ -126,6 +138,7 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
             markdown = new String(original, StandardCharsets.UTF_8);
             parser = "UTF8_DIRECT";
         }
+        cancellation.checkProcessingTask(taskId);
         if (markdown == null || markdown.isBlank()) {
             throw new IllegalStateException("DOCUMENT_MARKDOWN_EMPTY");
         }

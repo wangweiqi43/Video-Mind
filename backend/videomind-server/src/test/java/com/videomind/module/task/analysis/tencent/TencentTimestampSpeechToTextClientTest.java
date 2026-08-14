@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -14,6 +15,7 @@ import com.videomind.infrastructure.storage.ObjectStorageService;
 import com.videomind.infrastructure.storage.dto.StoredObject;
 import com.videomind.module.task.analysis.dto.AudioExtractionResult;
 import com.videomind.module.task.entity.TaskRecord;
+import com.videomind.module.task.service.TaskCancellationGuard;
 import com.videomind.module.video.entity.VideoFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,8 +42,9 @@ class TencentTimestampSpeechToTextClientTest {
                 "{\"Response\":{\"Data\":{\"TaskId\":1001},\"RequestId\":\"create\"}}");
         when(transport.post(eq("DescribeTaskStatus"), any())).thenReturn(successResponse());
         ObjectMapper mapper = new ObjectMapper();
+        TaskCancellationGuard cancellation = mock(TaskCancellationGuard.class);
         var client = new TencentTimestampSpeechToTextClient(properties, storage, transport,
-                new TencentAsrResponseParser(mapper), mapper);
+                new TencentAsrResponseParser(mapper), mapper, cancellation);
         TaskRecord task = new TaskRecord();
         task.setId(9L);
 
@@ -52,6 +55,7 @@ class TencentTimestampSpeechToTextClientTest {
         assertThat(result.getSegments()).hasSize(1);
         assertThat(result.getSegments().get(0).startMs()).isEqualTo(100);
         assertThat(result.getSegments().get(0).endMs()).isEqualTo(900);
+        verify(cancellation, atLeast(3)).checkVideoTask(9L);
         verify(storage).removeObject("video", "asr/task-9/audio.wav");
     }
 

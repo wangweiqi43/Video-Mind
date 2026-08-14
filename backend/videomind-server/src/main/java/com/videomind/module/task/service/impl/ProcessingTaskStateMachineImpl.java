@@ -28,6 +28,14 @@ public class ProcessingTaskStateMachineImpl implements ProcessingTaskStateMachin
             return new LeaseResult(LeaseStatus.TERMINAL, version);
         }
         LocalDateTime now = LocalDateTime.now();
+        if (task.getState() == ProcessingTaskState.CANCEL_REQUESTED) {
+            if (task.getLeaseExpiresAt() == null || task.getLeaseExpiresAt().isBefore(now)) {
+                return mapper.markCancelled(taskId, null, now) == 1
+                        ? new LeaseResult(LeaseStatus.TERMINAL, version + 1)
+                        : new LeaseResult(LeaseStatus.CANCELLATION_REQUESTED, version);
+            }
+            return new LeaseResult(LeaseStatus.CANCELLATION_REQUESTED, version);
+        }
         if (task.getState() == ProcessingTaskState.RETRY_WAIT && task.getNextRetryAt() != null
                 && task.getNextRetryAt().isAfter(now)) {
             return new LeaseResult(LeaseStatus.NOT_DUE, version);
@@ -81,6 +89,47 @@ public class ProcessingTaskStateMachineImpl implements ProcessingTaskStateMachin
         return mapper.markTerminal(taskId, expectedVersion, owner, ProcessingTaskState.FAILED.name(),
                 normalizeStage(stage), normalizeError(errorCode), truncate(errorMessage, 2048),
                 LocalDateTime.now()) == 1;
+    }
+
+    @Override
+    public CancelRequestResult requestCancel(Long taskId, Long userId) {
+        ProcessingTask task = mapper.selectById(taskId);
+        if (task == null) {
+            return new CancelRequestResult(CancelRequestStatus.NOT_FOUND, -1);
+        }
+        long version = value(task.getStateVersion());
+        if (!task.getUserId().equals(userId)) {
+            return new CancelRequestResult(CancelRequestStatus.FORBIDDEN, version);
+        }
+        if (task.getState().terminal()) {
+            return new CancelRequestResult(CancelRequestStatus.TERMINAL, version);
+        }
+        if (task.getState() == ProcessingTaskState.CANCEL_REQUESTED) {
+            return new CancelRequestResult(CancelRequestStatus.CANCEL_REQUESTED, version);
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int updated = task.getState() == ProcessingTaskState.PROCESSING
+                ? mapper.requestRunningCancellation(taskId, userId, version, now)
+                : mapper.cancelQueued(taskId, userId, version, now);
+        if (updated != 1) {
+            return new CancelRequestResult(CancelRequestStatus.CONFLICT, version);
+        }
+        CancelRequestStatus status = task.getState() == ProcessingTaskState.PROCESSING
+                ? CancelRequestStatus.CANCEL_REQUESTED : CancelRequestStatus.CANCELLED;
+        return new CancelRequestResult(status, version + 1);
+    }
+
+    @Override
+    public boolean cancellationRequested(Long taskId) {
+        ProcessingTask task = mapper.selectById(taskId);
+        return task != null && (task.getState() == ProcessingTaskState.CANCEL_REQUESTED
+                || task.getState() == ProcessingTaskState.CANCELLED);
+    }
+
+    @Override
+    public boolean cancel(Long taskId, String owner) {
+        requireOwner(owner);
+        return mapper.markCancelled(taskId, owner, LocalDateTime.now()) == 1;
     }
 
     private static void requireOwner(String owner) {

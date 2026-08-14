@@ -13,6 +13,7 @@ import com.videomind.common.enums.ProcessingTaskState;
 import com.videomind.module.task.entity.ProcessingTask;
 import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseStatus;
+import com.videomind.module.task.service.ProcessingTaskStateMachine.CancelRequestStatus;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
@@ -73,9 +74,47 @@ class ProcessingTaskStateMachineImplTest {
         assertThat(service.succeed(9L, "worker", 7L, "PUBLISHED")).isTrue();
     }
 
+    @Test
+    void runningTaskMovesToCancelRequestedWithVersionCas() {
+        ProcessingTask task = task(ProcessingTaskState.PROCESSING, 3L);
+        when(mapper.selectById(9L)).thenReturn(task);
+        when(mapper.requestRunningCancellation(eq(9L), eq(7L), eq(3L), any())).thenReturn(1);
+
+        var result = service.requestCancel(9L, 7L);
+
+        assertThat(result.status()).isEqualTo(CancelRequestStatus.CANCEL_REQUESTED);
+        assertThat(result.stateVersion()).isEqualTo(4L);
+    }
+
+    @Test
+    void queuedTaskCancelsImmediatelyAndReleasesFingerprint() {
+        ProcessingTask task = task(ProcessingTaskState.RETRY_WAIT, 5L);
+        when(mapper.selectById(9L)).thenReturn(task);
+        when(mapper.cancelQueued(eq(9L), eq(7L), eq(5L), any())).thenReturn(1);
+
+        var result = service.requestCancel(9L, 7L);
+
+        assertThat(result.status()).isEqualTo(CancelRequestStatus.CANCELLED);
+    }
+
+    @Test
+    void expiredCancelRequestIsFinalizedByNextDelivery() {
+        ProcessingTask task = task(ProcessingTaskState.CANCEL_REQUESTED, 6L);
+        task.setLeaseOwner("dead-worker");
+        task.setLeaseExpiresAt(LocalDateTime.now().minusSeconds(1));
+        when(mapper.selectById(9L)).thenReturn(task);
+        when(mapper.markCancelled(eq(9L), eq(null), any())).thenReturn(1);
+
+        var result = service.acquire(9L, "worker-2", "START", Duration.ofMinutes(2));
+
+        assertThat(result.status()).isEqualTo(LeaseStatus.TERMINAL);
+        verify(mapper, never()).acquireLease(anyLong(), anyLong(), any(), any(), any(), any());
+    }
+
     private static ProcessingTask task(ProcessingTaskState state, Long version) {
         ProcessingTask task = new ProcessingTask();
         task.setId(9L);
+        task.setUserId(7L);
         task.setState(state);
         task.setStage("START");
         task.setStateVersion(version);

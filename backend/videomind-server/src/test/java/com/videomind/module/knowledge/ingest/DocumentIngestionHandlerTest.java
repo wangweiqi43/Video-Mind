@@ -7,6 +7,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +34,8 @@ import com.videomind.module.knowledge.retrieval.KnowledgeIndexGateway;
 import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.service.ProcessingTaskHandler.TaskExecutionContext;
 import com.videomind.module.task.service.TaskCheckpointService;
+import com.videomind.module.task.service.TaskCancellationGuard;
+import com.videomind.module.task.service.TaskCancellationException;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -51,13 +55,14 @@ class DocumentIngestionHandlerTest {
     private final EmbeddingClient embeddings = mock(EmbeddingClient.class);
     private final KnowledgeIndexGateway index = mock(KnowledgeIndexGateway.class);
     private final TaskCheckpointService checkpoints = mock(TaskCheckpointService.class);
+    private final TaskCancellationGuard cancellation = mock(TaskCancellationGuard.class);
     private final AiProperties ai = new AiProperties();
     private final List<DocumentChunk> persisted = new ArrayList<>();
     private final KnowledgeDocument document = new KnowledgeDocument();
     private final DocumentVersion version = new DocumentVersion();
     private final DocumentIngestionHandler handler = new DocumentIngestionHandler(documents, versions, bases,
             chunks, assets, storage, new DocumentFileValidator(), mineru, new SemanticChunker(), embeddings,
-            index, checkpoints, ai, new ObjectMapper());
+            index, checkpoints, ai, new ObjectMapper(), cancellation);
 
     @BeforeEach
     void setUp() {
@@ -140,6 +145,22 @@ class DocumentIngestionHandlerTest {
         verify(mineru).parse(any(), eq("manual.pdf"), eq("mineru-resume-1"), any());
         assertThat(version.getParser()).isEqualTo("MINERU_LOCAL");
         assertThat(version.getMineruTaskId()).isEqualTo("mineru-resume-1");
+    }
+
+    @Test
+    void mineruPollCancellationStopsBeforeDerivedAssetsAreStored() {
+        document.setTitle("manual.pdf");
+        doNothing().doThrow(new TaskCancellationException()).when(cancellation).checkProcessingTask(99L);
+        when(mineru.parse(any(), eq("manual.pdf"), any(), any())).thenAnswer(call -> {
+            MineruClient.ParseObserver observer = call.getArgument(3);
+            observer.beforePoll("mineru-1");
+            return new MineruClient.ParseResult("# should-not-persist", "MINERU_LOCAL", List.of(), "mineru-1");
+        });
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> handler.handle(context()))
+                .isInstanceOf(TaskCancellationException.class);
+
+        verify(storage, never()).putObject(anyString(), any(), anyLong(), anyString());
     }
 
     private static TaskExecutionContext context() {

@@ -18,10 +18,16 @@ import com.videomind.infrastructure.ratelimit.RateLimitService;
 import com.videomind.module.task.dto.AnalyzeTaskCreateRequest;
 import com.videomind.module.task.entity.AiSummaryResult;
 import com.videomind.module.task.entity.TaskRecord;
+import com.videomind.module.task.entity.ProcessingTask;
 import com.videomind.module.task.mapper.AiSummaryResultMapper;
+import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.mq.TaskDispatchResult;
 import com.videomind.module.task.mq.TransactionalTaskMessageProducer;
+import com.videomind.module.task.service.ProcessingTaskStateMachine;
+import com.videomind.module.task.service.ProcessingTaskStateMachine.CancelRequestResult;
+import com.videomind.module.task.service.ProcessingTaskStateMachine.CancelRequestStatus;
+import com.videomind.module.task.service.TaskRecordProjectionService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,13 +42,16 @@ class TaskRecordServiceImplTest {
     private final AiSummaryResultMapper summaries = mock(AiSummaryResultMapper.class);
     private final AiProperties ai = new AiProperties();
     private final TencentAsrProperties tencent = new TencentAsrProperties();
+    private final ProcessingTaskMapper processingTasks = mock(ProcessingTaskMapper.class);
+    private final ProcessingTaskStateMachine processingState = mock(ProcessingTaskStateMachine.class);
+    private final TaskRecordProjectionService projection = mock(TaskRecordProjectionService.class);
     private TaskRecordServiceImpl service;
     private VideoFile video;
 
     @BeforeEach
     void setUp() {
         service = spy(new TaskRecordServiceImpl(videos, messages, rateLimit,
-                rateLimitProperties, summaries, ai, tencent));
+                rateLimitProperties, summaries, ai, tencent, processingTasks, processingState, projection));
         video = new VideoFile();
         video.setId(5L);
         video.setUserId(7L);
@@ -101,6 +110,33 @@ class TaskRecordServiceImplTest {
         assertThat(response.getTaskId()).isEqualTo(10L);
         assertThat(response.getReused()).isTrue();
         verify(messages, never()).dispatch(any());
+    }
+
+    @Test
+    void runningTaskCancellationProjectsRequestedStateAndReturnsCurrentTask() {
+        TaskRecord running = task(11L, TaskStatus.PROCESSING);
+        TaskRecord requested = task(11L, TaskStatus.CANCEL_REQUESTED);
+        ProcessingTask processing = new ProcessingTask();
+        processing.setId(99L);
+        doReturn(running, requested).when(service).getTask(11L, 7L);
+        when(processingTasks.selectOne(any())).thenReturn(processing);
+        when(processingState.requestCancel(99L, 7L))
+                .thenReturn(new CancelRequestResult(CancelRequestStatus.CANCEL_REQUESTED, 5L));
+
+        TaskRecord result = service.cancelTask(11L, 7L);
+
+        assertThat(result.getTaskStatus()).isEqualTo(TaskStatus.CANCEL_REQUESTED);
+        verify(projection).project(99L);
+    }
+
+    @Test
+    void terminalTaskCancellationIsIdempotentWithoutTouchingStateMachine() {
+        TaskRecord cancelled = task(11L, TaskStatus.CANCELLED);
+        doReturn(cancelled).when(service).getTask(11L, 7L);
+
+        assertThat(service.cancelTask(11L, 7L)).isSameAs(cancelled);
+
+        verify(processingState, never()).requestCancel(any(), any());
     }
 
     private AnalyzeTaskCreateRequest request() {

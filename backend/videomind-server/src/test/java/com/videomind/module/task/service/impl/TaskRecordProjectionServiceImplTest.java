@@ -67,6 +67,23 @@ class TaskRecordProjectionServiceImplTest {
         verify(taskRecords, never()).selectById(org.mockito.ArgumentMatchers.any());
     }
 
+    @Test
+    void projectsCooperativeCancellationStates() {
+        ProcessingTask source = source(ProcessingTaskState.CANCEL_REQUESTED);
+        TaskRecord target = target();
+        when(processingTasks.selectById(99L)).thenReturn(source);
+        when(taskRecords.selectById(11L)).thenReturn(target);
+
+        projection.project(99L);
+        assertThat(target.getTaskStatus()).isEqualTo(TaskStatus.CANCEL_REQUESTED);
+
+        source.setState(ProcessingTaskState.CANCELLED);
+        source.setFinishedTime(LocalDateTime.of(2026, 8, 14, 21, 0));
+        projection.project(99L);
+        assertThat(target.getTaskStatus()).isEqualTo(TaskStatus.CANCELLED);
+        assertThat(target.getFinishedTime()).isEqualTo(source.getFinishedTime());
+    }
+
     private ProcessingTask source(ProcessingTaskState state) {
         ProcessingTask value = new ProcessingTask();
         value.setId(99L);

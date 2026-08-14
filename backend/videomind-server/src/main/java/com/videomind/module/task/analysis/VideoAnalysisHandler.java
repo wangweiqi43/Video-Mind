@@ -17,6 +17,8 @@ import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.mapper.TaskRecordMapper;
 import com.videomind.module.task.service.ProcessingTaskHandler;
+import com.videomind.module.task.service.TaskCancellationException;
+import com.videomind.module.task.service.TaskCancellationGuard;
 import com.videomind.module.task.service.TaskCheckpointService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
@@ -52,6 +54,8 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
     private final VideoAnalysisArtifactService artifacts;
     private final VideoTimelinePipeline timelinePipeline;
     private final TaskCheckpointService checkpoints;
+    private final TaskCancellationGuard cancellation;
+    private final VideoAnalysisTempFileCleaner tempFiles;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -62,12 +66,24 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
     @Override
     public String handle(TaskExecutionContext context) throws Exception {
         TaskData data = requireTaskData(context);
+        try {
+            return execute(context, data);
+        } catch (TaskCancellationException cancelled) {
+            tempFiles.cleanup(data.task());
+            throw cancelled;
+        }
+    }
+
+    private String execute(TaskExecutionContext context, TaskData data) throws Exception {
+        cancellation.checkProcessingTask(context.taskId());
         AsrResult asr;
         if (checkpoints.isCompleted(context.taskId(), ASR_PERSISTED)) {
             asr = artifacts.loadAsr(data.task());
         } else {
             AudioExtractionResult audio = recoverOrExtractAudio(context.taskId(), data);
+            cancellation.checkProcessingTask(context.taskId());
             asr = speechToText.transcribe(audio, data.video(), data.task());
+            cancellation.checkProcessingTask(context.taskId());
             if (asr.getSegments() == null || asr.getSegments().isEmpty()) {
                 throw new IllegalStateException("ASR_TIMESTAMP_SEGMENTS_EMPTY");
             }
@@ -82,7 +98,9 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
         if (checkpoints.isCompleted(context.taskId(), OCR_PERSISTED)) {
             visuals = artifacts.loadOcr(data.task());
         } else {
+            cancellation.checkProcessingTask(context.taskId());
             visuals = timelinePipeline.recognize(data.task(), data.video());
+            cancellation.checkProcessingTask(context.taskId());
             artifacts.persistOcr(data.task(), visuals);
             checkpoints.complete(context.taskId(), OCR_PERSISTED,
                     json(Map.of("observationCount", visuals.size())), ocrChecksum(visuals));
@@ -90,9 +108,11 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
 
         List<AsrSegment> speech = artifacts.loadSpeech(data.task());
         if (!checkpoints.isCompleted(context.taskId(), TIMELINE_INDEXED)) {
+            cancellation.checkProcessingTask(context.taskId());
             IndexedTimeline indexed = timelinePipeline.build(data.task(), data.video(), transcriptVersion,
                             speech, visuals)
                     .orElseThrow(() -> new IllegalStateException("VIDEO_TIMELINE_EMPTY"));
+            cancellation.checkProcessingTask(context.taskId());
             checkpoints.complete(context.taskId(), TIMELINE_INDEXED,
                     json(Map.of("knowledgeBaseId", indexed.knowledgeBaseId(), "documentId", indexed.documentId(),
                             "versionId", indexed.versionId(), "chunkCount", indexed.chunkCount())),
@@ -100,7 +120,9 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
         }
 
         if (!checkpoints.isCompleted(context.taskId(), SUMMARY_SAVED)) {
+            cancellation.checkProcessingTask(context.taskId());
             SummaryResult summary = summaryClient.summarize(asr, data.video(), data.task());
+            cancellation.checkProcessingTask(context.taskId());
             AiSummaryResult saved = artifacts.saveSummary(data.task(), data.video(), transcriptVersion, summary);
             checkpoints.complete(context.taskId(), SUMMARY_SAVED,
                     json(Map.of("summaryId", saved.getId(), "model", safe(summary.getModelName()))),
@@ -108,6 +130,7 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
         }
 
         if (!checkpoints.isCompleted(context.taskId(), PUBLISHED)) {
+            cancellation.checkProcessingTask(context.taskId());
             checkpoints.complete(context.taskId(), PUBLISHED,
                     json(Map.of("videoId", data.video().getId(), "transcriptVersion", transcriptVersion)),
                     sha256(data.video().getId() + ":" + transcriptVersion));

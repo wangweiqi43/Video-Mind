@@ -76,7 +76,7 @@ const transcriptDialogStatus = computed(() => {
   if (transcriptDialog.error) return transcriptDialog.error
   if (transcriptDialog.data?.status === 'READY' && transcriptDialog.data?.transcriptionText) return ''
   const taskStatus = String(state.task?.taskStatus || '').toUpperCase()
-  if (['PENDING', 'PROCESSING', 'RETRYING'].includes(taskStatus)) {
+  if (['PENDING', 'PROCESSING', 'RETRYING', 'CANCEL_REQUESTED'].includes(taskStatus)) {
     return '视频转录处理中，完成后重新打开即可查看。'
   }
   return '尚未生成转录文本，请先点击“生成高级摘要总结”。'
@@ -326,6 +326,11 @@ async function pollTask(taskId) {
         message: task.errorMessage || '解析失败',
         customClass: 'videomind-toast'
       })
+      return
+    }
+    if (task.taskStatus === 'CANCELLED') {
+      activePollTaskId.value = null
+      ElMessage.info('视频解析任务已取消')
       return
     }
     if (Date.now() - startTime > TASK_POLL_TIMEOUT_MS) {

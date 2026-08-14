@@ -13,6 +13,8 @@ public interface TaskRecordService extends IService<TaskRecord> {
 
     TaskRecord getTask(Long taskId, Long userId);
 
+    TaskRecord cancelTask(Long taskId, Long userId);
+
     TaskRecord markProcessing(Long taskId, Long userId);
 
     void markSuccess(Long taskId, Long userId);

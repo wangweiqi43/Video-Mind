@@ -81,7 +81,13 @@ public class MineruClient {
     private ParseResult parseLocal(byte[] bytes, String filename, String resumeTaskId,
                                    ParseObserver observer) throws Exception {
         String taskId = resumeTaskId;
-        if (taskId == null || taskId.isBlank() || status(taskId) == null) {
+        JsonNode resumeStatus = null;
+        if (taskId != null && !taskId.isBlank()) {
+            observer.beforePoll(taskId);
+            resumeStatus = status(taskId);
+            observer.beforePoll(taskId);
+        }
+        if (taskId == null || taskId.isBlank() || resumeStatus == null) {
             taskId = submit(bytes, filename);
             observer.submitted(taskId);
         }
@@ -89,7 +95,9 @@ public class MineruClient {
         String lastStatus = "";
         int lastQueued = -1;
         while (Instant.now().isBefore(deadline)) {
+            observer.beforePoll(taskId);
             JsonNode value = status(taskId);
+            observer.beforePoll(taskId);
             if (value == null) {
                 taskId = submit(bytes, filename);
                 observer.submitted(taskId);
@@ -266,6 +274,9 @@ public class MineruClient {
         }
 
         default void status(String taskId, String status, int queuedAhead) {
+        }
+
+        default void beforePoll(String taskId) {
         }
     }
 

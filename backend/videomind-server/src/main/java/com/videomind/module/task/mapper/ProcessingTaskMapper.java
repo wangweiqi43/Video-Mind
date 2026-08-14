@@ -102,4 +102,40 @@ public interface ProcessingTaskMapper extends BaseMapper<ProcessingTask> {
                      @Param("owner") String owner, @Param("terminalState") String terminalState,
                      @Param("stage") String stage, @Param("errorCode") String errorCode,
                      @Param("errorMessage") String errorMessage, @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE processing_task
+               SET state = 'CANCEL_REQUESTED', stage = 'CANCEL_REQUESTED',
+                   state_version = state_version + 1, updated_time = #{now}
+             WHERE id = #{taskId} AND user_id = #{userId} AND state_version = #{expectedVersion}
+               AND state = 'PROCESSING'
+            """)
+    int requestRunningCancellation(@Param("taskId") Long taskId, @Param("userId") Long userId,
+                                   @Param("expectedVersion") long expectedVersion,
+                                   @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE processing_task
+               SET state = 'CANCELLED', stage = 'CANCELLED', active_fingerprint = NULL,
+                   lease_owner = NULL, lease_expires_at = NULL, next_retry_at = NULL,
+                   error_code = NULL, error_message = NULL, finished_time = #{now},
+                   state_version = state_version + 1, updated_time = #{now}
+             WHERE id = #{taskId} AND user_id = #{userId} AND state_version = #{expectedVersion}
+               AND state IN ('PENDING', 'RETRY_WAIT')
+            """)
+    int cancelQueued(@Param("taskId") Long taskId, @Param("userId") Long userId,
+                     @Param("expectedVersion") long expectedVersion, @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE processing_task
+               SET state = 'CANCELLED', stage = 'CANCELLED', active_fingerprint = NULL,
+                   lease_owner = NULL, lease_expires_at = NULL, next_retry_at = NULL,
+                   error_code = NULL, error_message = NULL, finished_time = #{now},
+                   state_version = state_version + 1, updated_time = #{now}
+             WHERE id = #{taskId} AND state = 'CANCEL_REQUESTED'
+               AND (lease_owner = #{owner} OR (#{owner} IS NULL
+                    AND (lease_expires_at IS NULL OR lease_expires_at < #{now})))
+            """)
+    int markCancelled(@Param("taskId") Long taskId, @Param("owner") String owner,
+                      @Param("now") LocalDateTime now);
 }

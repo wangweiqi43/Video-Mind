@@ -13,6 +13,7 @@ import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseResult;
 import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseStatus;
 import com.videomind.module.task.service.TaskEventConsumerService;
 import com.videomind.module.task.service.TaskRecordProjectionService;
+import com.videomind.module.task.service.TaskCancellationException;
 import java.time.Duration;
 import java.util.EnumMap;
 import java.util.List;
@@ -98,8 +99,18 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
         try {
             String finalStage = handler.handle(new TaskExecutionContext(event.getTaskId(), event.getEventId(), command));
             if (!stateMachine.succeed(event.getTaskId(), owner, lease.stateVersion(), finalStage)) {
+                if (stateMachine.cancellationRequested(event.getTaskId())) {
+                    stateMachine.cancel(event.getTaskId(), owner);
+                    taskRecords.project(event.getTaskId());
+                    inbox.complete(consumerGroup, event.getEventId());
+                    return;
+                }
                 throw new RetryableTaskMessageException("TASK_SUCCESS_CAS_LOST");
             }
+            taskRecords.project(event.getTaskId());
+            inbox.complete(consumerGroup, event.getEventId());
+        } catch (TaskCancellationException cancelled) {
+            stateMachine.cancel(event.getTaskId(), owner);
             taskRecords.project(event.getTaskId());
             inbox.complete(consumerGroup, event.getEventId());
         } catch (NonRetryableTaskMessageException known) {

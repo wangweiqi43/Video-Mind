@@ -20,6 +20,7 @@ import com.videomind.module.task.service.ConsumerInboxService;
 import com.videomind.module.task.service.ProcessingTaskHandler;
 import com.videomind.module.task.service.ProcessingTaskStateMachine;
 import com.videomind.module.task.service.TaskRecordProjectionService;
+import com.videomind.module.task.service.TaskCancellationException;
 import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseResult;
 import com.videomind.module.task.service.ProcessingTaskStateMachine.LeaseStatus;
 import java.util.List;
@@ -89,6 +90,38 @@ class TaskEventConsumerServiceImplTest {
                 .isInstanceOf(TaskEventConsumerServiceImpl.RetryableTaskMessageException.class);
         verify(taskRecords, org.mockito.Mockito.times(2)).project(9L);
         verify(inbox, never()).complete(anyString(), anyString());
+    }
+
+    @Test
+    void cooperativeCancellationCompletesInboxWithoutRetry() throws Exception {
+        when(inbox.claim("group", "event-1", 9L)).thenReturn(
+                new ConsumerInboxService.ClaimResult(ConsumerInboxService.ClaimStatus.IN_PROGRESS));
+        when(stateMachine.acquire(eq(9L), anyString(), eq("PARSE"), any()))
+                .thenReturn(new LeaseResult(LeaseStatus.ACQUIRED, 4L));
+        when(handler.handle(any())).thenThrow(new TaskCancellationException());
+        when(stateMachine.cancel(eq(9L), anyString())).thenReturn(true);
+
+        service.consume(new TaskEventMessage("event-1"));
+
+        verify(stateMachine).cancel(eq(9L), anyString());
+        verify(stateMachine, never()).retry(anyLong(), anyString(), anyLong(), anyString(), any(), any(), any());
+        verify(inbox).complete("group", "event-1");
+    }
+
+    @Test
+    void cancelWinsRaceAfterHandlerReturnsBeforeSuccessCas() throws Exception {
+        when(inbox.claim("group", "event-1", 9L)).thenReturn(
+                new ConsumerInboxService.ClaimResult(ConsumerInboxService.ClaimStatus.CLAIMED));
+        when(stateMachine.acquire(eq(9L), anyString(), eq("PARSE"), any()))
+                .thenReturn(new LeaseResult(LeaseStatus.ACQUIRED, 4L));
+        when(handler.handle(any())).thenReturn("PUBLISHED");
+        when(stateMachine.succeed(eq(9L), anyString(), eq(4L), eq("PUBLISHED"))).thenReturn(false);
+        when(stateMachine.cancellationRequested(9L)).thenReturn(true);
+
+        service.consume(new TaskEventMessage("event-1"));
+
+        verify(stateMachine).cancel(eq(9L), anyString());
+        verify(inbox).complete("group", "event-1");
     }
 
     private MqTransactionEvent event() throws Exception {

@@ -15,15 +15,34 @@ public interface ProcessingTaskStateMachine {
     boolean fail(Long taskId, String owner, long expectedVersion, String stage,
                  String errorCode, String errorMessage);
 
+    CancelRequestResult requestCancel(Long taskId, Long userId);
+
+    boolean cancellationRequested(Long taskId);
+
+    boolean cancel(Long taskId, String owner);
+
     enum LeaseStatus {
         ACQUIRED,
         BUSY,
         NOT_DUE,
+        CANCELLATION_REQUESTED,
         TERMINAL,
         RETRY_EXHAUSTED,
         NOT_FOUND
     }
 
     record LeaseResult(LeaseStatus status, long stateVersion) {
+    }
+
+    enum CancelRequestStatus {
+        CANCEL_REQUESTED,
+        CANCELLED,
+        TERMINAL,
+        CONFLICT,
+        NOT_FOUND,
+        FORBIDDEN
+    }
+
+    record CancelRequestResult(CancelRequestStatus status, long stateVersion) {
     }
 }

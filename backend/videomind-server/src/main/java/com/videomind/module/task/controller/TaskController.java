@@ -63,4 +63,9 @@ public class TaskController {
         return ApiResponse.success(taskRecordService.getLatestSuccessfulTaskByVideo(videoId,
                 MockUserContext.currentUserId()));
     }
+
+    @PostMapping("/{taskId}/cancel")
+    public ApiResponse<TaskRecord> cancel(@PathVariable Long taskId) {
+        return ApiResponse.success(taskRecordService.cancelTask(taskId, MockUserContext.currentUserId()));
+    }
 }

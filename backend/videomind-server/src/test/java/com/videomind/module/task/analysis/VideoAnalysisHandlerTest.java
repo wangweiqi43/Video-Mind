@@ -5,6 +5,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -27,6 +29,8 @@ import com.videomind.module.task.mapper.TaskRecordMapper;
 import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.service.ProcessingTaskHandler.TaskExecutionContext;
 import com.videomind.module.task.service.TaskCheckpointService;
+import com.videomind.module.task.service.TaskCancellationGuard;
+import com.videomind.module.task.service.TaskCancellationException;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
 import java.nio.file.Files;
@@ -50,8 +54,10 @@ class VideoAnalysisHandlerTest {
     private final VideoAnalysisArtifactService artifacts = mock(VideoAnalysisArtifactService.class);
     private final VideoTimelinePipeline timeline = mock(VideoTimelinePipeline.class);
     private final TaskCheckpointService checkpoints = mock(TaskCheckpointService.class);
+    private final TaskCancellationGuard cancellation = mock(TaskCancellationGuard.class);
+    private final VideoAnalysisTempFileCleaner tempFiles = mock(VideoAnalysisTempFileCleaner.class);
     private final VideoAnalysisHandler handler = new VideoAnalysisHandler(processingTasks, taskRecords, videos,
-            audio, speech, summary, artifacts, timeline, checkpoints, new ObjectMapper());
+            audio, speech, summary, artifacts, timeline, checkpoints, cancellation, tempFiles, new ObjectMapper());
     private TaskRecord task;
     private VideoFile video;
 
@@ -176,6 +182,24 @@ class VideoAnalysisHandlerTest {
 
         verify(checkpoints).complete(eq(99L), eq(VideoAnalysisHandler.AUDIO_EXTRACTED),
                 org.mockito.ArgumentMatchers.contains("mock://audio/task-11.wav"), any());
+    }
+
+    @Test
+    void cancellationAfterCloudAsrReturnsPreventsDatabasePersistenceAndCleansWorkspace() throws Exception {
+        Path audioFile = Files.writeString(tempDir.resolve("cancel-audio.wav"), "audio-content");
+        AsrResult result = AsrResult.builder().language("zh-CN").text("不应落库")
+                .segments(List.of(new AsrSegmentResult(0, 1_000, "不应落库", 0))).build();
+        when(audio.extract(video, task)).thenReturn(AudioExtractionResult.builder()
+                .audioPath(audioFile.toString()).durationSeconds(1).build());
+        when(speech.transcribe(any(), eq(video), eq(task))).thenReturn(result);
+        doNothing().doNothing().doThrow(new TaskCancellationException())
+                .when(cancellation).checkProcessingTask(99L);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> handler.handle(context()))
+                .isInstanceOf(TaskCancellationException.class);
+
+        verify(artifacts, never()).persistAsr(any(), any(), any());
+        verify(tempFiles).cleanup(task);
     }
 
     private TaskExecutionContext context() {

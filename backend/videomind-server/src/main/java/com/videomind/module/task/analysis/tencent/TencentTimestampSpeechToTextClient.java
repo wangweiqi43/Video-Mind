@@ -10,6 +10,7 @@ import com.videomind.module.task.analysis.SpeechToTextClient;
 import com.videomind.module.task.analysis.dto.AsrResult;
 import com.videomind.module.task.analysis.dto.AudioExtractionResult;
 import com.videomind.module.task.entity.TaskRecord;
+import com.videomind.module.task.service.TaskCancellationGuard;
 import com.videomind.module.video.entity.VideoFile;
 import java.io.IOException;
 import java.io.InputStream;
@@ -33,20 +34,24 @@ public class TencentTimestampSpeechToTextClient implements SpeechToTextClient {
     private final TencentAsrApiTransport transport;
     private final TencentAsrResponseParser parser;
     private final ObjectMapper objectMapper;
+    private final TaskCancellationGuard cancellation;
 
     public TencentTimestampSpeechToTextClient(TencentAsrProperties properties, ObjectStorageService storage,
                                                TencentAsrApiTransport transport,
-                                               TencentAsrResponseParser parser, ObjectMapper objectMapper) {
+                                               TencentAsrResponseParser parser, ObjectMapper objectMapper,
+                                               TaskCancellationGuard cancellation) {
         this.properties = properties;
         this.storage = storage;
         this.transport = transport;
         this.parser = parser;
         this.objectMapper = objectMapper;
+        this.cancellation = cancellation;
     }
 
     @Override
     public AsrResult transcribe(AudioExtractionResult audio, VideoFile videoFile, TaskRecord taskRecord) {
         validateConfiguration();
+        cancellation.checkVideoTask(taskRecord.getId());
         Path audioPath = Path.of(audio.getAudioPath());
         if (!Files.isRegularFile(audioPath)) {
             throw new BizException(500, "ASR 音频文件不存在：" + audioPath);
@@ -57,7 +62,7 @@ public class TencentTimestampSpeechToTextClient implements SpeechToTextClient {
             String audioUrl = storage.presignGetUrl(uploaded.getBucket(), uploaded.getObjectKey(),
                     Duration.ofSeconds(expiry));
             long cloudTaskId = parser.parseCreatedTaskId(transport.post("CreateRecTask", createPayload(audioUrl)));
-            TencentAsrTaskResult result = poll(cloudTaskId);
+            TencentAsrTaskResult result = poll(cloudTaskId, taskRecord.getId());
             return AsrResult.builder()
                     .language("zh-CN")
                     .text(result.text())
@@ -82,11 +87,13 @@ public class TencentTimestampSpeechToTextClient implements SpeechToTextClient {
         }
     }
 
-    private TencentAsrTaskResult poll(long taskId) {
+    private TencentAsrTaskResult poll(long taskId, Long taskRecordId) {
         long deadline = System.nanoTime() + Duration.ofSeconds(properties.getTimeoutSeconds()).toNanos();
         while (System.nanoTime() < deadline) {
+            cancellation.checkVideoTask(taskRecordId);
             TencentAsrTaskResult result = parser.parse(transport.post("DescribeTaskStatus", payload(Map.of(
                     "TaskId", taskId))));
+            cancellation.checkVideoTask(taskRecordId);
             if (result.status() == TencentAsrTaskResult.Status.SUCCEEDED) {
                 return result;
             }
