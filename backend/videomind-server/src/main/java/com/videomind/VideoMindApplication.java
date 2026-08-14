@@ -9,6 +9,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.videomind.module.video.mapper",
         "com.videomind.module.task.mapper",
         "com.videomind.module.knowledge.mapper",
+        "com.videomind.module.knowledge.timeline",
         "com.videomind.module.chat.mapper",
         "com.videomind.module.auth.mapper",
         "com.videomind.module.agent.mapper"
