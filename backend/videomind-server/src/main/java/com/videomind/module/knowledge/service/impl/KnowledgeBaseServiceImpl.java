@@ -88,31 +88,6 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void deleteUserKnowledgeBase(Long userId, Long knowledgeBaseId) {
-        KnowledgeBase value = requireOwned(userId, knowledgeBaseId);
-        if (value.getType() == KnowledgeBaseType.VIDEO) {
-            throw new BizException(409, "视频知识库随视频管理，不能独立删除");
-        }
-        value.setStatus(KnowledgeLifecycleStatus.DELETING);
-        value.setActive(false);
-        value.setUpdatedTime(LocalDateTime.now());
-        knowledgeBaseMapper.updateById(value);
-        List<KnowledgeDocument> documents = knowledgeDocumentMapper.selectList(
-                Wrappers.<KnowledgeDocument>lambdaQuery()
-                        .eq(KnowledgeDocument::getKnowledgeBaseId, knowledgeBaseId)
-                        .eq(KnowledgeDocument::getUserId, userId)
-                        .eq(KnowledgeDocument::getActive, true));
-        for (KnowledgeDocument document : documents) {
-            document.setStatus(KnowledgeLifecycleStatus.DELETING);
-            document.setActive(false);
-            document.setDedupeKey(null);
-            document.setUpdatedTime(LocalDateTime.now());
-            knowledgeDocumentMapper.updateById(document);
-        }
-    }
-
-    @Override
     public List<Long> requireReadyConversationScope(Long userId, Long videoId,
                                                     List<Long> selectedKnowledgeBaseIds) {
         KnowledgeBase video = findVideoKnowledgeBase(userId, videoId);

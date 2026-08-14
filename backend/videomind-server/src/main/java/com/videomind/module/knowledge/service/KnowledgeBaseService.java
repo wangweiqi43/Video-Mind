@@ -13,7 +13,5 @@ public interface KnowledgeBaseService {
 
     KnowledgeBaseResponse get(Long userId, Long knowledgeBaseId);
 
-    void deleteUserKnowledgeBase(Long userId, Long knowledgeBaseId);
-
     List<Long> requireReadyConversationScope(Long userId, Long videoId, List<Long> selectedKnowledgeBaseIds);
 }

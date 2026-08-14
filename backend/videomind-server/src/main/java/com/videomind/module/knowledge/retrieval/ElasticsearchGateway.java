@@ -136,6 +136,14 @@ public class ElasticsearchGateway implements HybridSearchGateway, KnowledgeIndex
     }
 
     @Override
+    public void deleteKnowledgeBase(Long knowledgeBaseId) {
+        ObjectNode body = mapper.createObjectNode();
+        body.putObject("query").putObject("term").put("knowledgeBaseId", knowledgeBaseId);
+        request("POST", "/" + properties.getIndexAlias()
+                + "/_delete_by_query?refresh=true&conflicts=proceed", body, "application/json");
+    }
+
+    @Override
     public void deleteOtherVersions(Long documentId, Long currentVersionId) {
         ObjectNode bool = mapper.createObjectNode();
         bool.putArray("filter").addObject().putObject("term").put("documentId", documentId);

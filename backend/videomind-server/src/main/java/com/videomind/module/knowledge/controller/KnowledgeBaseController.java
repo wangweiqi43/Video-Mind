@@ -7,6 +7,8 @@ import com.videomind.module.knowledge.dto.KnowledgeBaseResponse;
 import com.videomind.module.knowledge.dto.DocumentUploadResponse;
 import com.videomind.module.knowledge.service.KnowledgeDocumentApplicationService;
 import com.videomind.module.knowledge.service.KnowledgeBaseService;
+import com.videomind.module.knowledge.deletion.DeletionTaskApplicationService;
+import com.videomind.module.task.dto.DeletionTaskResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
@@ -27,6 +31,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class KnowledgeBaseController {
     private final KnowledgeBaseService service;
     private final KnowledgeDocumentApplicationService documentApplicationService;
+    private final DeletionTaskApplicationService deletionTasks;
 
     @PostMapping
     public ApiResponse<KnowledgeBaseResponse> create(@Valid @RequestBody KnowledgeBaseCreateRequest request) {
@@ -51,8 +56,9 @@ public class KnowledgeBaseController {
     }
 
     @DeleteMapping("/{knowledgeBaseId}")
-    public ApiResponse<Void> delete(@PathVariable Long knowledgeBaseId) {
-        service.deleteUserKnowledgeBase(MockUserContext.currentUserId(), knowledgeBaseId);
-        return ApiResponse.success();
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ApiResponse<DeletionTaskResponse> delete(@PathVariable Long knowledgeBaseId) {
+        return ApiResponse.success(deletionTasks.deleteKnowledgeBase(
+                MockUserContext.currentUserId(), knowledgeBaseId));
     }
 }

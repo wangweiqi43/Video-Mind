@@ -8,6 +8,7 @@ import com.videomind.module.task.dto.TaskResultResponse;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.service.TaskRecordService;
 import com.videomind.module.task.service.TaskResultService;
+import com.videomind.module.knowledge.deletion.DeletionTaskApplicationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +27,7 @@ public class TaskController {
 
     private final TaskRecordService taskRecordService;
     private final TaskResultService taskResultService;
+    private final DeletionTaskApplicationService deletionTasks;
 
     @PostMapping("/analyze")
     public ApiResponse<AnalyzeTaskCreateResponse> analyze(@Valid @RequestBody AnalyzeTaskCreateRequest request) {
@@ -49,8 +51,11 @@ public class TaskController {
     }
 
     @GetMapping("/{taskId}")
-    public ApiResponse<TaskRecord> detail(@PathVariable Long taskId) {
-        return ApiResponse.success(taskRecordService.getTask(taskId, MockUserContext.currentUserId()));
+    public ApiResponse<?> detail(@PathVariable Long taskId) {
+        Long userId = MockUserContext.currentUserId();
+        return deletionTasks.findDeletionTask(userId, taskId)
+                .<ApiResponse<?>>map(ApiResponse::success)
+                .orElseGet(() -> ApiResponse.success(taskRecordService.getTask(taskId, userId)));
     }
 
     @GetMapping("/{taskId}/result")
@@ -65,7 +70,10 @@ public class TaskController {
     }
 
     @PostMapping("/{taskId}/cancel")
-    public ApiResponse<TaskRecord> cancel(@PathVariable Long taskId) {
-        return ApiResponse.success(taskRecordService.cancelTask(taskId, MockUserContext.currentUserId()));
+    public ApiResponse<?> cancel(@PathVariable Long taskId) {
+        Long userId = MockUserContext.currentUserId();
+        return deletionTasks.cancelIfDeletionTask(userId, taskId)
+                .<ApiResponse<?>>map(ApiResponse::success)
+                .orElseGet(() -> ApiResponse.success(taskRecordService.cancelTask(taskId, userId)));
     }
 }

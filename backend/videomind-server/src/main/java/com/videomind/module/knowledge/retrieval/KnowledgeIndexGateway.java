@@ -13,6 +13,8 @@ public interface KnowledgeIndexGateway {
 
     void deleteDocument(Long documentId);
 
+    void deleteKnowledgeBase(Long knowledgeBaseId);
+
     void deleteOtherVersions(Long documentId, Long currentVersionId);
 
     record IndexedChunk(Long userId, RetrievalCandidate candidate, float[] vector, String sourceType) {

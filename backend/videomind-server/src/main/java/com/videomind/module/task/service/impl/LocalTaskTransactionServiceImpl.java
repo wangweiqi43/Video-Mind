@@ -16,6 +16,7 @@ import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.mq.TaskDispatchResult;
 import com.videomind.module.task.mq.TaskTransactionContext;
 import com.videomind.module.task.service.LocalTaskTransactionService;
+import com.videomind.module.task.service.TaskTargetLifecycle;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ public class LocalTaskTransactionServiceImpl implements LocalTaskTransactionServ
     private final MqTransactionEventMapper eventMapper;
     private final TaskRecordMapper taskRecordMapper;
     private final ObjectMapper objectMapper;
+    private final TaskTargetLifecycle targetLifecycle;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -66,6 +68,9 @@ public class LocalTaskTransactionServiceImpl implements LocalTaskTransactionServ
                 throw new IllegalStateException("video processing task business binding was lost");
             }
             task.setBusinessId(businessId);
+        }
+        if (inserted) {
+            targetLifecycle.onTaskCreated(command, now);
         }
 
         MqTransactionEvent event = new MqTransactionEvent();

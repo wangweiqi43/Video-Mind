@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.videomind.common.enums.KnowledgeBaseType;
@@ -56,15 +55,6 @@ class KnowledgeBaseServiceImplTest {
         when(bases.selectList(any())).thenReturn(List.of(video, pending));
         assertThatThrownBy(() -> service.requireReadyConversationScope(7L, 3L, List.of(12L)))
                 .isInstanceOf(BizException.class).hasMessageContaining("尚未全部就绪");
-    }
-
-    @Test
-    void videoKnowledgeBaseCannotBeDeletedDirectly() {
-        when(bases.selectOne(any())).thenReturn(base(11L, KnowledgeBaseType.VIDEO,
-                KnowledgeLifecycleStatus.READY));
-        assertThatThrownBy(() -> service.deleteUserKnowledgeBase(7L, 11L))
-                .isInstanceOf(BizException.class).hasMessageContaining("不能独立删除");
-        verify(bases).selectOne(any());
     }
 
     private KnowledgeBase base(Long id, KnowledgeBaseType type, KnowledgeLifecycleStatus status) {

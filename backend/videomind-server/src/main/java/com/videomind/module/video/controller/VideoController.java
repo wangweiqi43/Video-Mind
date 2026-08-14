@@ -3,6 +3,8 @@ package com.videomind.module.video.controller;
 import com.videomind.common.api.ApiResponse;
 import com.videomind.common.context.MockUserContext;
 import com.videomind.infrastructure.storage.ObjectStorageService;
+import com.videomind.module.knowledge.deletion.DeletionTaskApplicationService;
+import com.videomind.module.task.dto.DeletionTaskResponse;
 import com.videomind.module.video.dto.ChunkUploadResponse;
 import com.videomind.module.video.dto.MultipartUploadInitRequest;
 import com.videomind.module.video.dto.MultipartUploadInitResponse;
@@ -20,6 +22,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.util.StringUtils;
 
@@ -42,6 +46,7 @@ public class VideoController {
     private final VideoTranscriptionQueryService transcriptionQueryService;
     private final MultipartUploadService multipartUploadService;
     private final ObjectStorageService objectStorageService;
+    private final DeletionTaskApplicationService deletionTasks;
 
     @PostMapping("/upload")
     public ApiResponse<VideoUploadResponse> upload(@RequestPart("file") MultipartFile file) {
@@ -115,8 +120,8 @@ public class VideoController {
     }
 
     @DeleteMapping("/{videoId}")
-    public ApiResponse<Void> delete(@PathVariable Long videoId) {
-        videoFileService.deleteVideo(videoId, MockUserContext.currentUserId());
-        return ApiResponse.success(null);
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ApiResponse<DeletionTaskResponse> delete(@PathVariable Long videoId) {
+        return ApiResponse.success(deletionTasks.deleteVideo(MockUserContext.currentUserId(), videoId));
     }
 }

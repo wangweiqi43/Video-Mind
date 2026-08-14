@@ -17,15 +17,18 @@ import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.mapper.TaskRecordMapper;
 import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.mq.TaskTransactionContext;
+import com.videomind.module.task.service.TaskTargetLifecycle;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class LocalTaskTransactionServiceImplTest {
     private final ProcessingTaskMapper tasks = mock(ProcessingTaskMapper.class);
     private final MqTransactionEventMapper events = mock(MqTransactionEventMapper.class);
     private final TaskRecordMapper taskRecords = mock(TaskRecordMapper.class);
+    private final TaskTargetLifecycle targetLifecycle = mock(TaskTargetLifecycle.class);
     private final LocalTaskTransactionServiceImpl service = new LocalTaskTransactionServiceImpl(
-            tasks, events, taskRecords, new ObjectMapper());
+            tasks, events, taskRecords, new ObjectMapper(), targetLifecycle);
 
     @Test
     void insertsTaskAndCommitEvidenceInOneLocalTransaction() {
@@ -38,6 +41,7 @@ class LocalTaskTransactionServiceImplTest {
         assertThat(result.businessId()).isEqualTo(31L);
         assertThat(result.reused()).isFalse();
         verify(events).insert(any(MqTransactionEvent.class));
+        verify(targetLifecycle).onTaskCreated(any(), any());
         assertThat(context.getResolvedProcessingTaskId()).isEqualTo(101L);
         assertThat(context.getResolvedBusinessId()).isEqualTo(31L);
     }
@@ -103,6 +107,21 @@ class LocalTaskTransactionServiceImplTest {
         assertThat(result.businessId()).isEqualTo(502L);
         assertThat(result.reused()).isTrue();
         verify(taskRecords, never()).insert(any(TaskRecord.class));
+    }
+
+    @Test
+    void invokesDeletionTargetLifecycleOnlyForTheNewTransactionalTask() {
+        when(tasks.insertIgnoreActive(any(ProcessingTask.class))).thenReturn(1);
+        TaskCreateCommand command = new TaskCreateCommand(7L, ProcessingTaskType.KNOWLEDGE_DELETE,
+                31L, "KNOWLEDGE_DELETE:7:31", "DELETE_QUEUED", 10, Map.of());
+        TaskTransactionContext context = new TaskTransactionContext(
+                "event-delete", 105L, "topic", "KNOWLEDGE_DELETE", command);
+
+        service.createOrReuse(context);
+
+        ArgumentCaptor<TaskCreateCommand> created = ArgumentCaptor.forClass(TaskCreateCommand.class);
+        verify(targetLifecycle).onTaskCreated(created.capture(), any());
+        assertThat(created.getValue()).isSameAs(command);
     }
 
     private static TaskTransactionContext context(Long taskId) {

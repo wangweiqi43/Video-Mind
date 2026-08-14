@@ -437,9 +437,10 @@ async function deleteVideo(video) {
         customClass: 'videomind-dialog'
       }
     )
-    await api.deleteVideo(video.id)
-    ElMessage.success('视频已删除')
+    const deletion = await api.deleteVideo(video.id)
+    ElMessage.success(`删除任务已提交（任务 ${deletion.taskId}）`)
     const wasSelected = state.selectedVideo?.id === video.id
+    state.videos = state.videos.filter((item) => item.id !== video.id)
     removeVideoSessionId(video.id)
     if (wasSelected) {
       state.selectedVideo = null
@@ -448,7 +449,6 @@ async function deleteVideo(video) {
       state.activeSessionId = null
       state.messages = []
     }
-    await loadVideos()
   } catch (error) {
     if (error === 'cancel' || error?.message === 'cancel') return
     ElMessage.error(error.message || '删除失败')
