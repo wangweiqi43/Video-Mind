@@ -15,6 +15,8 @@ public class DocumentVersion {
     private Integer versionNumber;
     private String originalBucket;
     private String originalObjectKey;
+    private Long originalFileSize;
+    private String originalContentType;
     private String markdownBucket;
     private String markdownObjectKey;
     private String parser;
