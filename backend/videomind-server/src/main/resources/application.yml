@@ -83,6 +83,11 @@ videomind:
     embedding-dim: ${KNOWLEDGE_EMBEDDING_DIM:1024}
     chunk-size: ${KNOWLEDGE_CHUNK_SIZE:600}
     chunk-overlap: ${KNOWLEDGE_CHUNK_OVERLAP:80}
+  mineru:
+    base-url: ${MINERU_LOCAL_BASE_URL:http://127.0.0.1:8000}
+    backend: ${MINERU_LOCAL_BACKEND:pipeline}
+    concurrency: ${MINERU_LOCAL_CONCURRENCY:1}
+    timeout-seconds: ${MINERU_TIMEOUT_SECONDS:300}
   upload:
     chunk-work-dir: ${UPLOAD_CHUNK_WORK_DIR:runtime/uploads}
     bitmap-prefix: ${UPLOAD_BITMAP_PREFIX:upload:bitmap:}
