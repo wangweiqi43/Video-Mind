@@ -10,7 +10,6 @@ import com.videomind.agentclient.AgentClientProperties;
 import com.videomind.agentclient.AgentTaskClient;
 import com.videomind.module.agent.entity.VideoAgentTask;
 import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
-import com.videomind.module.task.service.TaskRecordService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -34,9 +33,7 @@ class AgentTaskCoordinatorTest {
         when(tasks.selectList(any())).thenReturn(List.of(task));
         when(client.task("agent-task", 8L, null)).thenReturn(snapshot);
 
-        new AgentTaskCoordinator(properties, client, states, tasks,
-                mock(TaskRecordService.class), mock(MindAgentVideoSyncService.class),
-                mock(AdvancedReportService.class)).pollIngestTasks();
+        new AgentTaskCoordinator(properties, client, states, tasks).pollIngestTasks();
 
         verify(states).applySnapshot(eq(task), eq(snapshot));
     }

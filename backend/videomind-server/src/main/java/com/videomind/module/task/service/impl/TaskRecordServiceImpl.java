@@ -32,8 +32,6 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRecord> implements TaskRecordService {
 
-    private static final String LOCAL_MODE = "LOCAL";
-
     private final VideoFileService videoFileService;
     private final AnalyzeTaskMessageProducer analyzeTaskMessageProducer;
     private final RateLimitService rateLimitService;
@@ -71,7 +69,6 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         TaskRecord reusedTask = getOne(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
                 .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
-                .eq(TaskRecord::getAnalysisMode, LOCAL_MODE)
                 .eq(TaskRecord::getTaskStatus, TaskStatus.SUCCESS)
                 .orderByDesc(TaskRecord::getCreatedTime)
                 .last("LIMIT 1"));
@@ -82,7 +79,6 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         TaskRecord runningTask = getOne(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
                 .eq(TaskRecord::getVideoMd5, videoFile.getFileMd5())
-                .eq(TaskRecord::getAnalysisMode, LOCAL_MODE)
                 .in(TaskRecord::getTaskStatus, List.of(TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.RETRYING))
                 .orderByDesc(TaskRecord::getCreatedTime)
                 .last("LIMIT 1"));
@@ -95,8 +91,6 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
         taskRecord.setVideoId(videoFile.getId());
         taskRecord.setVideoMd5(videoFile.getFileMd5());
         taskRecord.setTaskStatus(TaskStatus.PENDING);
-        taskRecord.setAutoVectorize(false);
-        taskRecord.setAnalysisMode(LOCAL_MODE);
         taskRecord.setRetryCount(0);
         LocalDateTime now = LocalDateTime.now();
         taskRecord.setCreatedTime(now);

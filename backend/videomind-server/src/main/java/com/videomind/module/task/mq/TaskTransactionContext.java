@@ -9,7 +9,8 @@ public final class TaskTransactionContext {
     private final String topic;
     private final String tag;
     private final TaskCreateCommand command;
-    private Long resolvedTaskId;
+    private Long resolvedProcessingTaskId;
+    private Long resolvedBusinessId;
     private boolean reused;
 
     public TaskTransactionContext(String eventId, Long requestedTaskId, String topic, String tag,
@@ -21,8 +22,9 @@ public final class TaskTransactionContext {
         this.command = command;
     }
 
-    public void resolve(Long taskId, boolean reused) {
-        this.resolvedTaskId = taskId;
+    public void resolve(Long processingTaskId, Long businessId, boolean reused) {
+        this.resolvedProcessingTaskId = processingTaskId;
+        this.resolvedBusinessId = businessId;
         this.reused = reused;
     }
 }

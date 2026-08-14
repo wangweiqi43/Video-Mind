@@ -22,6 +22,16 @@ public interface ProcessingTaskMapper extends BaseMapper<ProcessingTask> {
 
     @Update("""
             UPDATE processing_task
+               SET business_id = #{businessId}, updated_time = #{now}
+             WHERE id = #{taskId} AND business_id = #{expectedBusinessId}
+            """)
+    int bindBusinessId(@Param("taskId") Long taskId,
+                       @Param("expectedBusinessId") Long expectedBusinessId,
+                       @Param("businessId") Long businessId,
+                       @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE processing_task
                SET state = 'PROCESSING', stage = #{stage}, lease_owner = #{owner},
                    lease_expires_at = #{expiresAt}, attempt_count = attempt_count + 1,
                    state_version = state_version + 1,

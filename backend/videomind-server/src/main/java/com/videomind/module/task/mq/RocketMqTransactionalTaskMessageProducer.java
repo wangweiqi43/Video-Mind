@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.videomind.common.exception.BizException;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.apache.rocketmq.client.producer.LocalTransactionState;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.apache.rocketmq.spring.support.RocketMQHeaders;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,14 +29,20 @@ public class RocketMqTransactionalTaskMessageProducer implements TransactionalTa
                 .setHeader(RocketMQHeaders.KEYS, eventId)
                 .build();
         try {
-            rocketMQTemplate.sendMessageInTransaction(topic + ":" + context.getTag(), message, context);
+            var result = rocketMQTemplate.sendMessageInTransaction(topic + ":" + context.getTag(), message, context);
+            if (result == null || result.getLocalTransactionState() != LocalTransactionState.COMMIT_MESSAGE) {
+                throw new BizException(503, "RocketMQ 本地事务未提交");
+            }
+        } catch (BizException known) {
+            throw known;
         } catch (Exception failure) {
             throw new BizException(503, "RocketMQ 事务消息发送失败：" + failure.getMessage());
         }
-        if (context.getResolvedTaskId() == null) {
+        if (context.getResolvedProcessingTaskId() == null || context.getResolvedBusinessId() == null) {
             throw new BizException(503, "RocketMQ 本地事务未返回任务结果");
         }
-        return new TaskDispatchResult(eventId, context.getResolvedTaskId(), context.isReused());
+        return new TaskDispatchResult(eventId, context.getResolvedProcessingTaskId(),
+                context.getResolvedBusinessId(), context.isReused());
     }
 
     private static void validate(TaskCreateCommand command) {

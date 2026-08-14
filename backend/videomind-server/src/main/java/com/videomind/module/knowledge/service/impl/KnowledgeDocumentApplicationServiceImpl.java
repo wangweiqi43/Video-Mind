@@ -35,6 +35,6 @@ public class KnowledgeDocumentApplicationServiceImpl implements KnowledgeDocumen
                 registered.documentId(), fingerprint, "PARSE", 5,
                 Map.of("knowledgeBaseId", knowledgeBaseId, "versionId", registered.versionId()));
         TaskDispatchResult dispatched = messages.dispatch(command);
-        return registered.withDispatch(dispatched.eventId(), dispatched.taskId(), dispatched.reused());
+        return registered.withDispatch(dispatched.eventId(), dispatched.processingTaskId(), dispatched.reused());
     }
 }

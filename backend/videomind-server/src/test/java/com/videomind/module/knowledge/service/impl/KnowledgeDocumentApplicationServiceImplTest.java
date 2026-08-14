@@ -27,7 +27,7 @@ class KnowledgeDocumentApplicationServiceImplTest {
     @Test
     void dispatchesOnlyAfterRegistrationReturnsAndExposesTaskIdentity() {
         when(uploads.upload(7L, 11L, file)).thenReturn(response(KnowledgeLifecycleStatus.PROCESSING, false));
-        when(messages.dispatch(any())).thenReturn(new TaskDispatchResult("event-1", 99L, false));
+        when(messages.dispatch(any())).thenReturn(new TaskDispatchResult("event-1", 99L, 21L, false));
 
         DocumentUploadResponse result = service.uploadAndDispatch(7L, 11L, file);
 
@@ -53,7 +53,7 @@ class KnowledgeDocumentApplicationServiceImplTest {
     @Test
     void processingShaDuplicateRedispatchesAndReusesActiveTaskFingerprint() {
         when(uploads.upload(7L, 11L, file)).thenReturn(response(KnowledgeLifecycleStatus.PROCESSING, true));
-        when(messages.dispatch(any())).thenReturn(new TaskDispatchResult("event-2", 88L, true));
+        when(messages.dispatch(any())).thenReturn(new TaskDispatchResult("event-2", 88L, 21L, true));
 
         DocumentUploadResponse result = service.uploadAndDispatch(7L, 11L, file);
 
