@@ -32,7 +32,7 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
             if oldScope and oldScope ~= '' and oldScope ~= ARGV[1] then return -1 end
             local newTurns = tonumber(ARGV[5])
             local newBoundary = tonumber(ARGV[4])
-            if oldTurns > newTurns or (oldTurns == newTurns and oldBoundary > newBoundary) then return 0 end
+            if oldTurns > newTurns or oldBoundary > newBoundary then return 0 end
             redis.call('HSET', KEYS[1],
               'scopeFingerprint', ARGV[1], 'schemaVersion', ARGV[2],
               'summary', ARGV[3], 'summaryCoveredThroughTurn', ARGV[4],
@@ -41,11 +41,18 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
             redis.call('EXPIRE', KEYS[1], ARGV[9])
             return 1
             """;
+    static final String EVICT_IF_UNCHANGED_LUA = """
+            local current = redis.call('HGET', KEYS[1], 'updatedAt') or ''
+            if current == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+            return 0
+            """;
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
     private final CacheRedisProperties properties;
     private final DefaultRedisScript<Long> writeScript = new DefaultRedisScript<>(WRITE_LUA, Long.class);
+    private final DefaultRedisScript<Long> evictIfUnchangedScript =
+            new DefaultRedisScript<>(EVICT_IF_UNCHANGED_LUA, Long.class);
 
     public RedisHotConversationSnapshotService(
             @Qualifier("hotContextRedisTemplate") StringRedisTemplate redis,
@@ -76,8 +83,9 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
 
     @Override
     public Optional<HotConversationSnapshot> get(Long conversationId) {
+        Map<Object, Object> value = Map.of();
         try {
-            Map<Object, Object> value = redis.opsForHash().entries(key(conversationId));
+            value = redis.opsForHash().entries(key(conversationId));
             if (value.isEmpty()) {
                 return Optional.empty();
             }
@@ -95,6 +103,12 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
             return Optional.of(snapshot);
         } catch (Exception failure) {
             log.warn("Hot conversation snapshot read failed, conversationId={}", conversationId, failure);
+            try {
+                redis.execute(evictIfUnchangedScript, List.of(key(conversationId)), text(value, "updatedAt"));
+            } catch (RuntimeException cleanupFailure) {
+                log.debug("Failed to evict unreadable hot conversation snapshot, conversationId={}",
+                        conversationId, cleanupFailure);
+            }
             return Optional.empty();
         }
     }
@@ -109,8 +123,7 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
             return WriteResult.SCOPE_MISMATCH;
         }
         if (existing != null && (existing.totalCompletedTurns() > incoming.totalCompletedTurns()
-                || existing.totalCompletedTurns() == incoming.totalCompletedTurns()
-                && existing.summaryCoveredThroughTurn() > incoming.summaryCoveredThroughTurn())) {
+                || existing.summaryCoveredThroughTurn() > incoming.summaryCoveredThroughTurn())) {
             return WriteResult.STALE_REJECTED;
         }
         return WriteResult.UPDATED;

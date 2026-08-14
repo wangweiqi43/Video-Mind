@@ -27,6 +27,16 @@ class RedisHotConversationSnapshotServiceTest {
     }
 
     @Test
+    void rejectsSummaryBoundaryRegressionEvenWhenCompletedTurnsAdvance() {
+        HotConversationSnapshot existing = snapshot(12, 8, List.of(1L, 2L));
+        HotConversationSnapshot stale = snapshot(13, 7, List.of(1L, 2L));
+        assertThat(RedisHotConversationSnapshotService.decide(existing, stale))
+                .isEqualTo(WriteResult.STALE_REJECTED);
+        assertThat(RedisHotConversationSnapshotService.WRITE_LUA)
+                .contains("oldTurns > newTurns or oldBoundary > newBoundary");
+    }
+
+    @Test
     void knowledgeScopeIsImmutableForConversationLifetime() {
         HotConversationSnapshot existing = snapshot(12, 8, List.of(10L, 20L));
         HotConversationSnapshot changed = snapshot(13, 8, List.of(10L, 30L));

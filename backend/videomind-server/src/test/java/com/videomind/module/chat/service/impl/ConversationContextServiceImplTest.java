@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -73,6 +74,7 @@ class ConversationContextServiceImplTest {
     @Test
     void rejectsCachedScopeMismatchAndRebuildsFromMysql() {
         when(hotSnapshots.get(7L)).thenReturn(Optional.of(snapshot(7L, List.of(10L), 0, 0, List.of())));
+        when(hotSnapshots.write(any())).thenReturn(HotConversationSnapshotService.WriteResult.SCOPE_MISMATCH);
         when(messages.selectList(any())).thenReturn(List.of());
         when(messages.selectCount(any())).thenReturn(0L);
         when(turns.assemble(any())).thenReturn(List.of());
@@ -83,6 +85,34 @@ class ConversationContextServiceImplTest {
         ArgumentCaptor<HotConversationSnapshot> written = ArgumentCaptor.forClass(HotConversationSnapshot.class);
         verify(hotSnapshots).write(written.capture());
         assertThat(written.getValue().knowledgeBaseIds()).containsExactly(10L, 20L);
+        verify(hotSnapshots, never()).evict(7L);
+    }
+
+    @Test
+    void fallsBackToMysqlWhenCacheRedisReadFails() {
+        when(hotSnapshots.get(7L)).thenThrow(new IllegalStateException("redis unavailable"));
+        when(messages.selectList(any())).thenReturn(List.of());
+        when(messages.selectCount(any())).thenReturn(0L);
+        when(turns.assemble(any())).thenReturn(List.of());
+
+        ConversationContext context = service.getContext(7L, 99L, List.of(10L));
+
+        assertThat(context.getConversationId()).isEqualTo(7L);
+        verify(messages).selectList(any());
+    }
+
+    @Test
+    void returnsMysqlContextWhenCacheRedisWriteFails() {
+        when(hotSnapshots.get(7L)).thenReturn(Optional.empty());
+        when(hotSnapshots.write(any())).thenThrow(new IllegalStateException("redis unavailable"));
+        when(messages.selectList(any())).thenReturn(List.of());
+        when(messages.selectCount(any())).thenReturn(0L);
+        when(turns.assemble(any())).thenReturn(List.of());
+
+        ConversationContext context = service.getContext(7L, 99L, List.of(10L));
+
+        assertThat(context.getConversationId()).isEqualTo(7L);
+        verify(messages).selectList(any());
     }
 
     private static HotConversationSnapshot snapshot(Long id, List<Long> scope, long boundary, long total,
