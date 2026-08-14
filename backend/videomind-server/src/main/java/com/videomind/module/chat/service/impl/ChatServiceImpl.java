@@ -13,7 +13,6 @@ import com.videomind.module.chat.dto.ChatMessageResponse;
 import com.videomind.module.chat.dto.ChatSessionCreateResponse;
 import com.videomind.module.chat.dto.ChatSessionResponse;
 import com.videomind.module.chat.dto.ConversationContext;
-import com.videomind.module.chat.dto.HotConversationSnapshot;
 import com.videomind.module.chat.dto.RagReference;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
@@ -23,13 +22,11 @@ import com.videomind.module.chat.mapper.ChatSessionMapper;
 import com.videomind.module.chat.service.ChatService;
 import com.videomind.module.chat.service.ConversationContextService;
 import com.videomind.module.chat.service.ConversationSummaryService;
-import com.videomind.module.chat.service.HotConversationSnapshotService;
 import com.videomind.module.chat.support.ConversationTurnAssembler;
 import com.videomind.module.knowledge.retrieval.Evidence;
 import com.videomind.module.knowledge.service.KnowledgeBaseService;
 import com.videomind.module.video.service.VideoFileService;
 import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -56,7 +53,6 @@ public class ChatServiceImpl implements ChatService {
     private final VideoFileService videoFileService;
     private final KnowledgeBaseService knowledgeBaseService;
     private final PlannerExecutorCriticWorkflow workflow;
-    private final HotConversationSnapshotService hotSnapshots;
 
     @Override
     public ChatSessionCreateResponse createSession(Long videoId, List<Long> selectedKnowledgeBaseIds, Long userId) {
@@ -72,7 +68,7 @@ public class ChatServiceImpl implements ChatService {
         session.setCreatedTime(now);
         session.setUpdatedTime(now);
         chatSessionMapper.insert(session);
-        writeHotSnapshot(session, scope, null, 0);
+        conversationContextService.refreshContext(session.getId(), userId, scope);
         return ChatSessionCreateResponse.builder().sessionId(session.getId()).videoId(videoId)
                 .title(session.getTitle()).knowledgeBaseIds(scope).build();
     }
@@ -90,7 +86,8 @@ public class ChatServiceImpl implements ChatService {
     public ChatMessageResponse sendMessage(ChatMessageRequest request, Long userId) {
         rejectUnsupportedTools(request);
         ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
-        ConversationContext context = conversationContextService.getContext(session.getId(), userId);
+        List<Long> scope = sessionScope(session, userId);
+        ConversationContext context = conversationContextService.getContext(session.getId(), userId, scope);
         insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
         ChatOutcome outcome = answer(request, userId, session, context);
         ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
@@ -126,7 +123,8 @@ public class ChatServiceImpl implements ChatService {
     private void doStream(ChatMessageRequest request, Long userId, SseEmitter emitter) {
         try {
             ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
-            ConversationContext context = conversationContextService.getContext(session.getId(), userId);
+            List<Long> scope = sessionScope(session, userId);
+            ConversationContext context = conversationContextService.getContext(session.getId(), userId, scope);
             insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
             List<RagReference> references = retrieve(request, userId, session);
             List<ChatMessage> recent = turnAssembler.toMessages(context.getRecentTurns(), userId);
@@ -214,23 +212,7 @@ public class ChatServiceImpl implements ChatService {
         session.setUpdatedTime(LocalDateTime.now());
         chatSessionMapper.updateById(session);
         conversationSummaryService.compressIfNeeded(session.getId(), userId);
-        conversationContextService.refreshContext(session.getId(), userId);
-        ConversationContext refreshed = conversationContextService.getContext(session.getId(), userId);
-        long completed = chatMessageMapper.selectCount(new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getSessionId, session.getId()).eq(ChatMessage::getUserId, userId)
-                .eq(ChatMessage::getRole, MessageRole.ASSISTANT));
-        writeHotSnapshot(session, sessionScope(session, userId), refreshed, completed);
-    }
-
-    private void writeHotSnapshot(ChatSession session, List<Long> scope, ConversationContext context, long completed) {
-        try {
-            long boundary = context == null || context.getSummary() == null ? 0
-                    : context.getSummary().getCoveredTurnCount();
-            hotSnapshots.write(new HotConversationSnapshot(session.getId(), summary(context), boundary,
-                    completed, scope, Instant.now()));
-        } catch (RuntimeException exception) {
-            log.warn("Hot conversation snapshot unavailable, sessionId={}", session.getId(), exception);
-        }
+        conversationContextService.refreshContext(session.getId(), userId, sessionScope(session, userId));
     }
 
     private ChatSessionResponse toSessionResponse(ChatSession session, Long userId) {

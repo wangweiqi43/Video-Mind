@@ -4,8 +4,15 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.videomind.config.CacheRedisProperties;
 import com.videomind.module.chat.dto.HotConversationSnapshot;
+import com.videomind.module.chat.dto.ConversationContext;
+import com.videomind.module.chat.dto.ConversationTurn;
 import com.videomind.module.chat.service.HotConversationSnapshotService;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -23,14 +30,15 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
             local oldBoundary = tonumber(redis.call('HGET', KEYS[1], 'summaryCoveredThroughTurn') or '-1')
             local oldScope = redis.call('HGET', KEYS[1], 'scopeFingerprint')
             if oldScope and oldScope ~= '' and oldScope ~= ARGV[1] then return -1 end
-            local newTurns = tonumber(ARGV[4])
-            local newBoundary = tonumber(ARGV[3])
+            local newTurns = tonumber(ARGV[5])
+            local newBoundary = tonumber(ARGV[4])
             if oldTurns > newTurns or (oldTurns == newTurns and oldBoundary > newBoundary) then return 0 end
             redis.call('HSET', KEYS[1],
-              'scopeFingerprint', ARGV[1], 'summary', ARGV[2],
-              'summaryCoveredThroughTurn', ARGV[3], 'totalCompletedTurns', ARGV[4],
-              'knowledgeBaseIds', ARGV[5], 'updatedAt', ARGV[6])
-            redis.call('EXPIRE', KEYS[1], ARGV[7])
+              'scopeFingerprint', ARGV[1], 'schemaVersion', ARGV[2],
+              'summary', ARGV[3], 'summaryCoveredThroughTurn', ARGV[4],
+              'totalCompletedTurns', ARGV[5], 'knowledgeBaseIds', ARGV[6],
+              'recentTurns', ARGV[7], 'updatedAt', ARGV[8])
+            redis.call('EXPIRE', KEYS[1], ARGV[9])
             return 1
             """;
 
@@ -52,10 +60,12 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
         validate(snapshot);
         try {
             String ids = objectMapper.writeValueAsString(snapshot.knowledgeBaseIds());
+            String summary = objectMapper.writeValueAsString(snapshot.summary());
+            String recentTurns = objectMapper.writeValueAsString(snapshot.recentTurns());
             Long result = redis.execute(writeScript, List.of(key(snapshot.conversationId())),
-                    scopeFingerprint(snapshot.knowledgeBaseIds()), snapshot.summary(),
+                    snapshot.scopeFingerprint(), Integer.toString(snapshot.schemaVersion()), summary,
                     Long.toString(snapshot.summaryCoveredThroughTurn()),
-                    Long.toString(snapshot.totalCompletedTurns()), ids,
+                    Long.toString(snapshot.totalCompletedTurns()), ids, recentTurns,
                     snapshot.updatedAt().toString(), Long.toString(Math.max(60, properties.getContextTtlSeconds())));
             return result != null && result == 1 ? WriteResult.UPDATED
                     : result != null && result == -1 ? WriteResult.SCOPE_MISMATCH : WriteResult.STALE_REJECTED;
@@ -72,9 +82,17 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
                 return Optional.empty();
             }
             List<Long> ids = objectMapper.readValue(text(value, "knowledgeBaseIds"), new TypeReference<>() { });
-            return Optional.of(new HotConversationSnapshot(conversationId, text(value, "summary"),
-                    number(value, "summaryCoveredThroughTurn"), number(value, "totalCompletedTurns"), ids,
-                    Instant.parse(text(value, "updatedAt"))));
+            ConversationContext.SummarySnapshot summary = objectMapper.readValue(text(value, "summary"),
+                    ConversationContext.SummarySnapshot.class);
+            List<ConversationTurn> recentTurns = objectMapper.readValue(text(value, "recentTurns"),
+                    new TypeReference<>() { });
+            HotConversationSnapshot snapshot = new HotConversationSnapshot(integer(value, "schemaVersion"),
+                    conversationId, summary, number(value, "summaryCoveredThroughTurn"),
+                    number(value, "totalCompletedTurns"), ids, text(value, "scopeFingerprint"), recentTurns,
+                    Instant.parse(text(value, "updatedAt")));
+            validate(snapshot);
+            redis.expire(key(conversationId), Duration.ofSeconds(Math.max(60, properties.getContextTtlSeconds())));
+            return Optional.of(snapshot);
         } catch (Exception failure) {
             log.warn("Hot conversation snapshot read failed, conversationId={}", conversationId, failure);
             return Optional.empty();
@@ -87,8 +105,7 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
     }
 
     static WriteResult decide(HotConversationSnapshot existing, HotConversationSnapshot incoming) {
-        if (existing != null && !scopeFingerprint(existing.knowledgeBaseIds())
-                .equals(scopeFingerprint(incoming.knowledgeBaseIds()))) {
+        if (existing != null && !existing.scopeFingerprint().equals(incoming.scopeFingerprint())) {
             return WriteResult.SCOPE_MISMATCH;
         }
         if (existing != null && (existing.totalCompletedTurns() > incoming.totalCompletedTurns()
@@ -100,13 +117,23 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
     }
 
     static String scopeFingerprint(List<Long> ids) {
-        return ids.stream().map(String::valueOf).reduce((left, right) -> left + "," + right).orElse("");
+        String orderedIds = ids.stream().map(String::valueOf)
+                .reduce((left, right) -> left + "," + right).orElse("");
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(orderedIds.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
     }
 
     private static void validate(HotConversationSnapshot value) {
         if (value == null || value.conversationId() == null || value.updatedAt() == null
+                || value.schemaVersion() != HotConversationSnapshot.CURRENT_SCHEMA_VERSION
                 || value.summaryCoveredThroughTurn() < 0 || value.totalCompletedTurns() < 0
-                || value.summaryCoveredThroughTurn() > value.totalCompletedTurns()) {
+                || value.summaryCoveredThroughTurn() > value.totalCompletedTurns()
+                || !scopeFingerprint(value.knowledgeBaseIds()).equals(value.scopeFingerprint())
+                || value.recentTurns().size() > value.totalCompletedTurns()) {
             throw new IllegalArgumentException("invalid hot conversation snapshot");
         }
     }
@@ -118,6 +145,10 @@ public class RedisHotConversationSnapshotService implements HotConversationSnaps
 
     private static long number(Map<Object, Object> value, String key) {
         return Long.parseLong(text(value, key));
+    }
+
+    private static int integer(Map<Object, Object> value, String key) {
+        return Integer.parseInt(text(value, key));
     }
 
     private static String key(Long conversationId) {

@@ -3,6 +3,7 @@ package com.videomind.module.chat.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.videomind.module.chat.dto.HotConversationSnapshot;
+import com.videomind.module.chat.dto.ConversationContext;
 import com.videomind.module.chat.service.HotConversationSnapshotService.WriteResult;
 import java.time.Instant;
 import java.util.List;
@@ -42,6 +43,10 @@ class RedisHotConversationSnapshotServiceTest {
     }
 
     private static HotConversationSnapshot snapshot(long turns, long boundary, List<Long> scope) {
-        return new HotConversationSnapshot(1L, "summary", boundary, turns, scope, Instant.parse("2026-08-14T00:00:00Z"));
+        ConversationContext.SummarySnapshot summary = ConversationContext.SummarySnapshot.builder()
+                .summaryText("summary").coveredTurnCount(Math.toIntExact(boundary)).build();
+        return new HotConversationSnapshot(HotConversationSnapshot.CURRENT_SCHEMA_VERSION, 1L, summary,
+                boundary, turns, scope, RedisHotConversationSnapshotService.scopeFingerprint(scope), List.of(),
+                Instant.parse("2026-08-14T00:00:00Z"));
     }
 }

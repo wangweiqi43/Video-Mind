@@ -1,23 +1,23 @@
 package com.videomind.module.chat.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.videomind.common.enums.MessageRole;
 import com.videomind.module.chat.dto.ConversationContext;
 import com.videomind.module.chat.dto.ConversationTurn;
+import com.videomind.module.chat.dto.HotConversationSnapshot;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ConversationSummary;
 import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.service.ConversationContextService;
 import com.videomind.module.chat.service.ConversationSummaryService;
+import com.videomind.module.chat.service.HotConversationSnapshotService;
 import com.videomind.module.chat.support.ConversationTurnAssembler;
-import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
@@ -26,56 +26,49 @@ public class ConversationContextServiceImpl implements ConversationContextServic
 
     private static final int MAX_UNCOMPRESSED_TURNS = 16;
     private static final int RECENT_REMAIN_TURNS = 8;
-    private static final Duration CONTEXT_TTL = Duration.ofHours(2);
-    private static final String CONTEXT_KEY_PREFIX = "qa:ctx:";
 
-    private final StringRedisTemplate stringRedisTemplate;
-    private final ObjectMapper objectMapper;
+    private final HotConversationSnapshotService hotSnapshots;
     private final ChatMessageMapper chatMessageMapper;
     private final ConversationSummaryService conversationSummaryService;
     private final ConversationTurnAssembler turnAssembler;
 
     @Override
-    public ConversationContext getContext(Long conversationId, Long userId) {
-        ConversationContext cached = readFromRedis(conversationId);
-        if (cached != null) {
-            touch(conversationId);
-            return cached;
+    public ConversationContext getContext(Long conversationId, Long userId, List<Long> knowledgeBaseIds) {
+        List<Long> scope = immutableScope(knowledgeBaseIds);
+        HotConversationSnapshot cached = readHotSnapshot(conversationId);
+        if (isValid(cached, conversationId, scope)) {
+            return toContext(cached);
         }
-        ConversationContext context = buildFromMysql(conversationId, userId);
-        writeToRedis(context);
-        return context;
+        RebuiltContext rebuilt = buildFromMysql(conversationId, userId);
+        writeHotSnapshot(rebuilt, scope);
+        return rebuilt.context();
     }
 
     @Override
-    public void refreshContext(Long conversationId, Long userId) {
-        writeToRedis(buildFromMysql(conversationId, userId));
+    public void refreshContext(Long conversationId, Long userId, List<Long> knowledgeBaseIds) {
+        writeHotSnapshot(buildFromMysql(conversationId, userId), immutableScope(knowledgeBaseIds));
     }
 
     @Override
     public void evictContext(Long conversationId) {
         try {
-            stringRedisTemplate.delete(key(conversationId));
-        } catch (Exception ex) {
-            log.warn("Failed to evict conversation context cache, conversationId={}", conversationId, ex);
+            hotSnapshots.evict(conversationId);
+        } catch (RuntimeException failure) {
+            log.warn("Failed to evict hot conversation snapshot, conversationId={}", conversationId, failure);
         }
     }
 
-    private ConversationContext readFromRedis(Long conversationId) {
+    private HotConversationSnapshot readHotSnapshot(Long conversationId) {
         try {
-            String json = stringRedisTemplate.opsForValue().get(key(conversationId));
-            if (!StringUtils.hasText(json)) {
-                return null;
-            }
-            ConversationContext context = objectMapper.readValue(json, ConversationContext.class);
-            return conversationId.equals(context.getConversationId()) ? context : null;
-        } catch (Exception ex) {
-            log.warn("Failed to read conversation context cache, falling back to MySQL, conversationId={}", conversationId, ex);
+            return hotSnapshots.get(conversationId).orElse(null);
+        } catch (RuntimeException failure) {
+            log.warn("Hot conversation snapshot unavailable; rebuilding from MySQL, conversationId={}",
+                    conversationId, failure);
             return null;
         }
     }
 
-    private ConversationContext buildFromMysql(Long conversationId, Long userId) {
+    private RebuiltContext buildFromMysql(Long conversationId, Long userId) {
         ConversationSummary summary = conversationSummaryService.getActiveSummary(conversationId);
         LambdaQueryWrapper<ChatMessage> query = new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, conversationId)
@@ -89,12 +82,17 @@ public class ConversationContextServiceImpl implements ConversationContextServic
                 ? MAX_UNCOMPRESSED_TURNS
                 : Math.max(RECENT_REMAIN_TURNS, Math.min(MAX_UNCOMPRESSED_TURNS, turns.size()));
         int start = Math.max(0, turns.size() - contextTurns);
-        return ConversationContext.builder()
+        ConversationContext context = ConversationContext.builder()
                 .conversationId(conversationId)
                 .summary(toSnapshot(summary))
                 .recentTurns(List.copyOf(turns.subList(start, turns.size())))
                 .updatedAt(LocalDateTime.now().toString())
                 .build();
+        long completedTurns = chatMessageMapper.selectCount(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, conversationId)
+                .eq(ChatMessage::getUserId, userId)
+                .eq(ChatMessage::getRole, MessageRole.ASSISTANT));
+        return new RebuiltContext(context, completedTurns);
     }
 
     private ConversationContext.SummarySnapshot toSnapshot(ConversationSummary summary) {
@@ -110,27 +108,54 @@ public class ConversationContextServiceImpl implements ConversationContextServic
                 .build();
     }
 
-    private void writeToRedis(ConversationContext context) {
+    private void writeHotSnapshot(RebuiltContext rebuilt, List<Long> scope) {
+        ConversationContext context = rebuilt.context();
+        long boundary = context.getSummary() == null || context.getSummary().getCoveredTurnCount() == null
+                ? 0 : context.getSummary().getCoveredTurnCount();
+        if (boundary > rebuilt.totalCompletedTurns()) {
+            log.warn("Conversation summary boundary exceeds completed turns; skip cache write, conversationId={}",
+                    context.getConversationId());
+            return;
+        }
+        String fingerprint = RedisHotConversationSnapshotService.scopeFingerprint(scope);
+        HotConversationSnapshot snapshot = new HotConversationSnapshot(
+                HotConversationSnapshot.CURRENT_SCHEMA_VERSION, context.getConversationId(), context.getSummary(),
+                boundary, rebuilt.totalCompletedTurns(), scope, fingerprint, context.getRecentTurns(), Instant.now());
         try {
-            stringRedisTemplate.opsForValue().set(
-                    key(context.getConversationId()),
-                    objectMapper.writeValueAsString(context),
-                    CONTEXT_TTL
-            );
-        } catch (Exception ex) {
-            log.warn("Failed to write conversation context cache, conversationId={}", context.getConversationId(), ex);
+            HotConversationSnapshotService.WriteResult result = hotSnapshots.write(snapshot);
+            if (result != HotConversationSnapshotService.WriteResult.UPDATED) {
+                log.warn("Hot conversation snapshot rejected, conversationId={}, result={}",
+                        context.getConversationId(), result);
+            }
+        } catch (RuntimeException failure) {
+            log.warn("Failed to write hot conversation snapshot, conversationId={}",
+                    context.getConversationId(), failure);
         }
     }
 
-    private void touch(Long conversationId) {
-        try {
-            stringRedisTemplate.expire(key(conversationId), CONTEXT_TTL);
-        } catch (Exception ex) {
-            log.warn("Failed to refresh conversation context TTL, conversationId={}", conversationId, ex);
+    private static boolean isValid(HotConversationSnapshot value, Long conversationId, List<Long> scope) {
+        if (value == null || value.schemaVersion() != HotConversationSnapshot.CURRENT_SCHEMA_VERSION
+                || !conversationId.equals(value.conversationId()) || !scope.equals(value.knowledgeBaseIds())
+                || value.summaryCoveredThroughTurn() < 0
+                || value.summaryCoveredThroughTurn() > value.totalCompletedTurns()
+                || value.recentTurns().size() > value.totalCompletedTurns()) {
+            return false;
         }
+        return RedisHotConversationSnapshotService.scopeFingerprint(scope).equals(value.scopeFingerprint());
     }
 
-    private String key(Long conversationId) {
-        return CONTEXT_KEY_PREFIX + conversationId;
+    private static ConversationContext toContext(HotConversationSnapshot value) {
+        return ConversationContext.builder()
+                .conversationId(value.conversationId())
+                .summary(value.summary())
+                .recentTurns(value.recentTurns())
+                .updatedAt(value.updatedAt().toString())
+                .build();
     }
+
+    private static List<Long> immutableScope(List<Long> values) {
+        return values == null ? List.of() : List.copyOf(values);
+    }
+
+    private record RebuiltContext(ConversationContext context, long totalCompletedTurns) { }
 }

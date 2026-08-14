@@ -16,7 +16,6 @@ import com.videomind.module.agent.workflow.AgentWorkflowModels;
 import com.videomind.module.agent.workflow.PlannerExecutorCriticWorkflow;
 import com.videomind.module.chat.dto.ChatMessageRequest;
 import com.videomind.module.chat.dto.ConversationContext;
-import com.videomind.module.chat.dto.HotConversationSnapshot;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
 import com.videomind.module.chat.llm.ChatAnswerClient;
@@ -24,7 +23,6 @@ import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.mapper.ChatSessionMapper;
 import com.videomind.module.chat.service.ConversationContextService;
 import com.videomind.module.chat.service.ConversationSummaryService;
-import com.videomind.module.chat.service.HotConversationSnapshotService;
 import com.videomind.module.chat.support.ConversationTurnAssembler;
 import com.videomind.module.knowledge.retrieval.Evidence;
 import com.videomind.module.knowledge.service.KnowledgeBaseService;
@@ -47,9 +45,8 @@ class ChatServiceLocalWorkflowTest {
     private final VideoFileService videos = mock(VideoFileService.class);
     private final KnowledgeBaseService knowledgeBases = mock(KnowledgeBaseService.class);
     private final PlannerExecutorCriticWorkflow workflow = mock(PlannerExecutorCriticWorkflow.class);
-    private final HotConversationSnapshotService hot = mock(HotConversationSnapshotService.class);
     private final ChatServiceImpl service = new ChatServiceImpl(sessions, messages, answers, contexts, summaries,
-            turns, new ObjectMapper(), videos, knowledgeBases, workflow, hot);
+            turns, new ObjectMapper(), videos, knowledgeBases, workflow);
 
     @BeforeEach
     void setUp() {
@@ -69,7 +66,7 @@ class ChatServiceLocalWorkflowTest {
         ArgumentCaptor<ChatSession> session = ArgumentCaptor.forClass(ChatSession.class);
         verify(sessions).insert(session.capture());
         assertThat(session.getValue().getKnowledgeBaseIdsJson()).isEqualTo("[10,20]");
-        verify(hot).write(any(HotConversationSnapshot.class));
+        verify(contexts).refreshContext(null, 99L, List.of(10L, 20L));
     }
 
     @Test
@@ -78,7 +75,7 @@ class ChatServiceLocalWorkflowTest {
         when(sessions.selectOne(any())).thenReturn(session);
         ConversationContext context = ConversationContext.builder().conversationId(13L)
                 .recentTurns(List.of()).build();
-        when(contexts.getContext(13L, 99L)).thenReturn(context);
+        when(contexts.getContext(13L, 99L, List.of(10L, 20L))).thenReturn(context);
         Evidence evidence = new Evidence("ev-1", 20L, 30L, 40L, 2, 2, "用户文档", "章节",
                 "幂等状态机", "父段落", 1_000L, 2_000L, 0.03, 0.9, 0.82);
         when(workflow.run(any())).thenReturn(new AgentWorkflowModels.Result(
@@ -86,7 +83,6 @@ class ChatServiceLocalWorkflowTest {
         when(turns.toMessages(List.of(), 99L)).thenReturn(List.of());
         when(answers.answer(eq("如何保证幂等"), any(), eq(List.of()), eq(""), any()))
                 .thenReturn("使用状态机和 CAS Lease");
-        when(messages.selectCount(any())).thenReturn(1L);
 
         ChatMessageRequest request = new ChatMessageRequest();
         request.setSessionId(13L);
@@ -103,7 +99,7 @@ class ChatServiceLocalWorkflowTest {
                 ArgumentCaptor.forClass(AgentWorkflowModels.Request.class);
         verify(workflow).run(workflowRequest.capture());
         assertThat(workflowRequest.getValue().knowledgeBaseIds()).containsExactly(10L, 20L);
-        verify(hot).write(any(HotConversationSnapshot.class));
+        verify(contexts).refreshContext(13L, 99L, List.of(10L, 20L));
     }
 
     @Test
