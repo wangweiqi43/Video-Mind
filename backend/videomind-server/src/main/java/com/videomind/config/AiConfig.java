@@ -22,7 +22,8 @@ public class AiConfig {
     private long resolveReadTimeout(AiProperties aiProperties) {
         int configuredMax = Math.max(
                 Math.max(aiProperties.getAsr().getTimeoutSeconds(), aiProperties.getSummary().getTimeoutSeconds()),
-                Math.max(aiProperties.getEmbedding().getTimeoutSeconds(), aiProperties.getChat().getTimeoutSeconds())
+                Math.max(Math.max(aiProperties.getEmbedding().getTimeoutSeconds(),
+                        aiProperties.getRerank().getTimeoutSeconds()), aiProperties.getChat().getTimeoutSeconds())
         );
         return Math.max(300, configuredMax);
     }

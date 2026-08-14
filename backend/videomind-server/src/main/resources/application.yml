@@ -88,6 +88,17 @@ videomind:
     backend: ${MINERU_LOCAL_BACKEND:pipeline}
     concurrency: ${MINERU_LOCAL_CONCURRENCY:1}
     timeout-seconds: ${MINERU_TIMEOUT_SECONDS:300}
+  elasticsearch:
+    enabled: ${ELASTICSEARCH_ENABLED:true}
+    url: ${ELASTICSEARCH_URL:http://localhost:9201}
+    index-alias: ${ELASTICSEARCH_INDEX_ALIAS:videomind-chunks}
+    physical-index: ${ELASTICSEARCH_PHYSICAL_INDEX:videomind-chunks-v1}
+    dimension: ${ELASTICSEARCH_DIMENSION:1024}
+    num-candidates: ${ELASTICSEARCH_NUM_CANDIDATES:200}
+    username: ${ELASTICSEARCH_USERNAME:}
+    password: ${ELASTICSEARCH_PASSWORD:}
+    connect-timeout-millis: ${ELASTICSEARCH_CONNECT_TIMEOUT_MILLIS:2000}
+    read-timeout-millis: ${ELASTICSEARCH_READ_TIMEOUT_MILLIS:5000}
   upload:
     chunk-work-dir: ${UPLOAD_CHUNK_WORK_DIR:runtime/uploads}
     bitmap-prefix: ${UPLOAD_BITMAP_PREFIX:upload:bitmap:}
@@ -117,6 +128,12 @@ videomind:
       model: ${EMBEDDING_MODEL:Qwen/Qwen3-Embedding-0.6B}
       dimension: ${EMBEDDING_DIMENSION:1024}
       timeout-seconds: ${EMBEDDING_TIMEOUT_SECONDS:120}
+    rerank:
+      mode: ${VIDEOMIND_RERANK_MODE:real}
+      endpoint: ${RERANK_API_ENDPOINT:https://api.siliconflow.cn/v1/rerank}
+      api-key: "${RERANK_API_KEY:${SILICONFLOW_API_KEY:}}"
+      model: ${RERANK_MODEL:BAAI/bge-reranker-v2-m3}
+      timeout-seconds: ${RERANK_TIMEOUT_SECONDS:120}
     chat:
       mode: ${VIDEOMIND_CHAT_MODE:real}
       endpoint: ${CHAT_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}

@@ -11,6 +11,7 @@ public class AiProperties {
     private ApiProvider asr = new ApiProvider();
     private ApiProvider summary = new ApiProvider();
     private EmbeddingProvider embedding = new EmbeddingProvider();
+    private ApiProvider rerank = new ApiProvider();
     private ApiProvider chat = new ApiProvider();
 
     @Data

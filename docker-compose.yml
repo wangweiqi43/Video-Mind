@@ -72,3 +72,49 @@ services:
       - "8001:8001"
     volumes:
       - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/redis:/data"
+
+  redis-cache:
+    image: redis:7.4-alpine
+    container_name: videomind-redis-cache
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - ${CACHE_REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - "127.0.0.1:${CACHE_REDIS_PORT:-6382}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  elasticsearch:
+    image: videomind-elasticsearch:8.19.14-ik
+    container_name: videomind-elasticsearch
+    build:
+      context: ./deploy/elasticsearch
+      args:
+        ELASTICSEARCH_VERSION: 8.19.14
+        IK_PLUGIN_URL: ${IK_PLUGIN_URL:-https://get.infini.cloud/elasticsearch/analysis-ik/8.19.14}
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    mem_limit: 2g
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-9201}:9200"
+    volumes:
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/elasticsearch:/usr/share/elasticsearch/data"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
