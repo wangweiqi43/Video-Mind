@@ -82,10 +82,6 @@ videomind:
     max-frames: ${OCR_MAX_FRAMES:300}
     timeout-seconds: ${OCR_TIMEOUT_SECONDS:60}
   knowledge:
-    index-name: ${KNOWLEDGE_INDEX_NAME:idx:videomind_knowledge}
-    key-prefix: ${KNOWLEDGE_KEY_PREFIX:knowledge:chunk:}
-    task-status-prefix: ${KNOWLEDGE_TASK_STATUS_PREFIX:knowledge:task:}
-    ttl-seconds: ${KNOWLEDGE_TTL_SECONDS:2592000}
     embedding-dim: ${KNOWLEDGE_EMBEDDING_DIM:1024}
     chunk-size: ${KNOWLEDGE_CHUNK_SIZE:600}
     chunk-overlap: ${KNOWLEDGE_CHUNK_OVERLAP:80}
@@ -162,25 +158,3 @@ videomind:
       api-key: "${CHAT_API_KEY:${SILICONFLOW_API_KEY:}}"
       model: ${CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
       timeout-seconds: ${CHAT_TIMEOUT_SECONDS:120}
-  agent:
-    enabled: ${VIDEOMIND_AGENT_ENABLED:false}
-    ingest-enabled: ${VIDEOMIND_AGENT_INGEST_ENABLED:false}
-    chat-enabled: ${VIDEOMIND_AGENT_CHAT_ENABLED:false}
-    web-search-enabled: ${VIDEOMIND_AGENT_WEB_SEARCH_ENABLED:false}
-    advanced-report-enabled: ${VIDEOMIND_AGENT_ADVANCED_REPORT_ENABLED:${VIDEOMIND_AGENT_DEEP_RESEARCH_ENABLED:false}}
-    presentation-enabled: ${VIDEOMIND_AGENT_PRESENTATION_ENABLED:false}
-    fallback-on-error: ${VIDEOMIND_AGENT_FALLBACK_ON_ERROR:true}
-    base-url: ${AGENT_PLATFORM_BASE_URL:http://localhost:8090}
-    tenant-id: ${AGENT_PLATFORM_TENANT_ID:videomind}
-    api-key: ${AGENT_PLATFORM_API_KEY:}
-    signing-secret: ${AGENT_PLATFORM_SIGNING_SECRET:}
-    webhook-secret: ${AGENT_PLATFORM_WEBHOOK_SECRET:}
-    frontend-url: ${AGENT_PLATFORM_FRONTEND_URL:http://localhost:5174}
-    oauth-client-id: ${AGENT_PLATFORM_OAUTH_CLIENT_ID:videomind}
-    oauth-client-secret: ${AGENT_PLATFORM_OAUTH_CLIENT_SECRET:}
-    oauth-redirect-uri: ${AGENT_PLATFORM_OAUTH_REDIRECT_URI:http://localhost:8080/api/integrations/mindagent/callback}
-    connect-timeout-seconds: ${AGENT_PLATFORM_CONNECT_TIMEOUT_SECONDS:10}
-    read-timeout-seconds: ${AGENT_PLATFORM_READ_TIMEOUT_SECONDS:180}
-    max-retries: ${AGENT_PLATFORM_MAX_RETRIES:2}
-    presigned-url-expiry-seconds: ${AGENT_PRESIGNED_URL_EXPIRY_SECONDS:900}
-    task-poll-interval-seconds: ${AGENT_TASK_POLL_INTERVAL_SECONDS:5}

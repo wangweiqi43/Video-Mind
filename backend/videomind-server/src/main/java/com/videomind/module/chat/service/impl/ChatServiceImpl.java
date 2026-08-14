@@ -45,7 +45,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Service
 @RequiredArgsConstructor
 public class ChatServiceImpl implements ChatService {
-    private static final String LOCAL_MODE = "LOCAL";
     private static final String NEW_SESSION_TITLE = "新会话";
     private final ChatSessionMapper chatSessionMapper;
     private final ChatMessageMapper chatMessageMapper;
@@ -69,7 +68,6 @@ public class ChatServiceImpl implements ChatService {
         session.setUserId(userId);
         session.setVideoId(videoId);
         session.setTitle(NEW_SESSION_TITLE);
-        session.setApplicationMode(LOCAL_MODE);
         session.setKnowledgeBaseIdsJson(json(scope));
         session.setCreatedTime(now);
         session.setUpdatedTime(now);
@@ -192,7 +190,6 @@ public class ChatServiceImpl implements ChatService {
         }
         List<Long> scope = knowledgeBaseService.requireReadyConversationScope(userId, session.getVideoId(), List.of());
         session.setKnowledgeBaseIdsJson(json(scope));
-        session.setApplicationMode(LOCAL_MODE);
         chatSessionMapper.updateById(session);
         return scope;
     }
@@ -215,7 +212,6 @@ public class ChatServiceImpl implements ChatService {
         }
         session.setLastMessagePreview(shorten(answer == null ? null : answer.strip().replaceAll("\\s+", " "), 512));
         session.setUpdatedTime(LocalDateTime.now());
-        session.setApplicationMode(LOCAL_MODE);
         chatSessionMapper.updateById(session);
         conversationSummaryService.compressIfNeeded(session.getId(), userId);
         conversationContextService.refreshContext(session.getId(), userId);

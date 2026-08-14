@@ -4,14 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.videomind.common.enums.UploadStatus;
-import com.videomind.agentclient.AgentTaskClient;
 import com.videomind.common.exception.BizException;
 import com.videomind.config.RateLimitProperties;
 import com.videomind.infrastructure.ratelimit.RateLimitService;
 import com.videomind.infrastructure.storage.ObjectStorageService;
 import com.videomind.infrastructure.storage.dto.StoredObject;
-import com.videomind.module.agent.entity.VideoAgentTask;
-import com.videomind.module.agent.mapper.VideoAgentTaskMapper;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
 import com.videomind.module.chat.entity.ConversationSummary;
@@ -19,8 +16,6 @@ import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.mapper.ChatSessionMapper;
 import com.videomind.module.chat.mapper.ConversationSummaryMapper;
 import com.videomind.module.chat.service.ConversationContextService;
-import com.videomind.module.knowledge.repository.KnowledgeStatusRepository;
-import com.videomind.module.knowledge.repository.KnowledgeVectorRepository;
 import com.videomind.module.task.entity.AiSummaryResult;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.entity.VideoTranscription;
@@ -60,14 +55,10 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
     private final VideoTranscriptionMapper videoTranscriptionMapper;
     private final AiSummaryResultMapper aiSummaryResultMapper;
     private final VideoUploadSessionMapper videoUploadSessionMapper;
-    private final KnowledgeVectorRepository knowledgeVectorRepository;
-    private final KnowledgeStatusRepository knowledgeStatusRepository;
     private final ChatSessionMapper chatSessionMapper;
     private final ChatMessageMapper chatMessageMapper;
     private final ConversationSummaryMapper conversationSummaryMapper;
     private final ConversationContextService conversationContextService;
-    private final VideoAgentTaskMapper videoAgentTaskMapper;
-    private final AgentTaskClient agentTaskClient;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -170,22 +161,11 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
     @Transactional(rollbackFor = Exception.class)
     public void deleteVideo(Long videoId, Long userId) {
         VideoFile videoFile = getVideoDetail(videoId, userId);
-        boolean hasAgentTask=videoAgentTaskMapper.selectCount(Wrappers.<VideoAgentTask>lambdaQuery()
-                .eq(VideoAgentTask::getVideoId,videoId).eq(VideoAgentTask::getUserId,userId))>0;
-        if(hasAgentTask||StringUtils.hasText(videoFile.getAgentSourceKnowledgeBaseId())||StringUtils.hasText(videoFile.getAgentReportKnowledgeBaseId()))
-            agentTaskClient.deleteVideoKnowledge(videoId,userId,null);
-        videoAgentTaskMapper.delete(Wrappers.<VideoAgentTask>lambdaQuery()
-                .eq(VideoAgentTask::getVideoId, videoId)
-                .eq(VideoAgentTask::getUserId, userId));
         List<TaskRecord> tasks = taskRecordMapper.selectList(new LambdaQueryWrapper<TaskRecord>()
                 .eq(TaskRecord::getUserId, userId)
                 .eq(TaskRecord::getVideoId, videoId));
         List<Long> taskIds = tasks.stream().map(TaskRecord::getId).toList();
 
-        for (Long taskId : taskIds) {
-            knowledgeVectorRepository.deleteChunks(taskId);
-            knowledgeStatusRepository.deleteStatus(taskId);
-        }
         if (!taskIds.isEmpty()) {
             videoTranscriptionMapper.delete(Wrappers.<VideoTranscription>lambdaQuery()
                     .eq(VideoTranscription::getUserId, userId)

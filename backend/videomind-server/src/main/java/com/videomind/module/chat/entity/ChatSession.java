@@ -17,8 +17,6 @@ public class ChatSession {
     private Long videoId;
     private String title;
     private String memorySummary;
-    private String applicationMode;
-    private String mindagentConversationId;
     private String lastMessagePreview;
     private String knowledgeBaseIdsJson;
     private LocalDateTime createdTime;

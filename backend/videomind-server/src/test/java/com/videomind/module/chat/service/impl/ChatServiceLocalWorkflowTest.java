@@ -68,7 +68,6 @@ class ChatServiceLocalWorkflowTest {
         assertThat(result.getKnowledgeBaseIds()).containsExactly(10L, 20L);
         ArgumentCaptor<ChatSession> session = ArgumentCaptor.forClass(ChatSession.class);
         verify(sessions).insert(session.capture());
-        assertThat(session.getValue().getApplicationMode()).isEqualTo("LOCAL");
         assertThat(session.getValue().getKnowledgeBaseIdsJson()).isEqualTo("[10,20]");
         verify(hot).write(any(HotConversationSnapshot.class));
     }
@@ -125,7 +124,6 @@ class ChatServiceLocalWorkflowTest {
         session.setUserId(99L);
         session.setVideoId(7L);
         session.setTitle("本地会话");
-        session.setApplicationMode("LOCAL");
         session.setKnowledgeBaseIdsJson("[10,20]");
         session.setCreatedTime(LocalDateTime.now());
         session.setUpdatedTime(LocalDateTime.now());
