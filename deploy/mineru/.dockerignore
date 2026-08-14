@@ -1,0 +1,5 @@
+*
+!.dockerignore
+!Dockerfile
+!build_opencv_shim.py
+!download_wheel.py

@@ -118,3 +118,31 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+
+  mineru:
+    image: videomind-mineru:3.4.4-cpu
+    container_name: videomind-mineru
+    build:
+      context: ./deploy/mineru
+    init: true
+    restart: unless-stopped
+    environment:
+      MINERU_DEVICE_MODE: cpu
+      MINERU_MODEL_SOURCE: ${MINERU_MODEL_SOURCE:-modelscope}
+      MINERU_API_MAX_CONCURRENT_REQUESTS: "1"
+      MINERU_PROCESSING_WINDOW_SIZE: "1"
+      MINERU_INTRA_OP_NUM_THREADS: "1"
+      MINERU_INTER_OP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    ports:
+      - "127.0.0.1:8003:8000"
+    volumes:
+      - "${VIDEOMIND_DATA_ROOT:-E:/VideoMindData}/mineru:/data"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 20

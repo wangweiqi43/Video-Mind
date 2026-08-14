@@ -86,7 +86,7 @@ videomind:
     chunk-size: ${KNOWLEDGE_CHUNK_SIZE:600}
     chunk-overlap: ${KNOWLEDGE_CHUNK_OVERLAP:80}
   mineru:
-    base-url: ${MINERU_LOCAL_BASE_URL:http://127.0.0.1:8000}
+    base-url: ${MINERU_LOCAL_BASE_URL:http://127.0.0.1:8003}
     backend: ${MINERU_LOCAL_BACKEND:pipeline}
     concurrency: ${MINERU_LOCAL_CONCURRENCY:1}
     timeout-seconds: ${MINERU_TIMEOUT_SECONDS:300}
