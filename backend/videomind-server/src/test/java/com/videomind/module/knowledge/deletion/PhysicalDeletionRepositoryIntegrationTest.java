@@ -92,7 +92,7 @@ class PhysicalDeletionRepositoryIntegrationTest {
         jdbc.update("INSERT INTO chat_generation VALUES (71,61)");
         jdbc.update("INSERT INTO agent_execution VALUES (81,71)");
         jdbc.update("INSERT INTO agent_step VALUES (81)");
-        for (String table : List.of("video_asr_segment", "video_ocr_observation", "video_transcription",
+        for (String table : List.of("video_asr_chunk", "video_asr_segment", "video_ocr_observation", "video_transcription",
                 "ai_summary_result", "task_record")) {
             jdbc.update("INSERT INTO " + table + " VALUES (15,7)");
         }
@@ -109,7 +109,7 @@ class PhysicalDeletionRepositoryIntegrationTest {
         for (String table : List.of("video_file", "knowledge_base", "knowledge_document", "document_version",
                 "document_asset", "document_chunk", "video_timeline", "video_report", "video_upload_session",
                 "chat_session", "chat_message", "conversation_summary", "conversation_knowledge_base",
-                "chat_generation", "agent_execution", "agent_step", "video_asr_segment",
+                "chat_generation", "agent_execution", "agent_step", "video_asr_chunk", "video_asr_segment",
                 "video_ocr_observation", "video_transcription", "ai_summary_result", "task_record")) {
             assertThat(count(table)).as(table).isZero();
         }
@@ -138,6 +138,7 @@ class PhysicalDeletionRepositoryIntegrationTest {
                 "CREATE TABLE chat_generation(id BIGINT,conversation_id BIGINT)",
                 "CREATE TABLE agent_execution(id BIGINT,generation_id BIGINT)",
                 "CREATE TABLE agent_step(execution_id BIGINT)",
+                "CREATE TABLE video_asr_chunk(video_id BIGINT,user_id BIGINT)",
                 "CREATE TABLE video_asr_segment(video_id BIGINT,user_id BIGINT)",
                 "CREATE TABLE video_ocr_observation(video_id BIGINT,user_id BIGINT)",
                 "CREATE TABLE video_transcription(video_id BIGINT,user_id BIGINT)",

@@ -13,7 +13,6 @@ public class TencentAsrProperties {
     private String engineModelType = "16k_zh_en_2.0";
     private int pollIntervalMillis = 1_000;
     private int timeoutSeconds = 600;
-    private int presignedUrlExpirySeconds = 900;
     private int chunkSeconds = 120;
     private int chunkOverlapMillis = 1_000;
     private long maxInlineAudioBytes = 5L * 1024 * 1024;

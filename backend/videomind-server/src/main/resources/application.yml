@@ -144,7 +144,6 @@ videomind:
       engine-model-type: ${TENCENT_ASR_ENGINE_MODEL:16k_zh_en_2.0}
       poll-interval-millis: ${TENCENT_ASR_POLL_INTERVAL_MILLIS:1000}
       timeout-seconds: ${TENCENT_ASR_TIMEOUT_SECONDS:600}
-      presigned-url-expiry-seconds: ${TENCENT_ASR_URL_EXPIRY_SECONDS:900}
       chunk-seconds: ${TENCENT_ASR_CHUNK_SECONDS:120}
       chunk-overlap-millis: ${TENCENT_ASR_CHUNK_OVERLAP_MS:1000}
       max-inline-audio-bytes: ${TENCENT_ASR_MAX_INLINE_BYTES:5242880}

@@ -99,6 +99,7 @@ public class PhysicalDeletionRepository {
         jdbc.update("DELETE s FROM conversation_summary s JOIN chat_session c ON c.id=s.conversation_id "
                 + "WHERE c.video_id=? AND c.user_id=?", videoId, userId);
         jdbc.update("DELETE FROM chat_session WHERE video_id=? AND user_id=?", videoId, userId);
+        jdbc.update("DELETE FROM video_asr_chunk WHERE video_id=? AND user_id=?", videoId, userId);
         jdbc.update("DELETE FROM video_asr_segment WHERE video_id=? AND user_id=?", videoId, userId);
         jdbc.update("DELETE FROM video_ocr_observation WHERE video_id=? AND user_id=?", videoId, userId);
         jdbc.update("DELETE FROM video_timeline WHERE video_id=? AND user_id=?", videoId, userId);
