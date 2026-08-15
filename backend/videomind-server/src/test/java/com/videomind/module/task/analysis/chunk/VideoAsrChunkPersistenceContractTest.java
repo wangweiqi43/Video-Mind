@@ -3,10 +3,13 @@ package com.videomind.module.task.analysis.chunk;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.videomind.VideoMindApplication;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Update;
+import org.mybatis.spring.annotation.MapperScan;
 import org.junit.jupiter.api.Test;
 
 class VideoAsrChunkPersistenceContractTest {
@@ -36,5 +39,12 @@ class VideoAsrChunkPersistenceContractTest {
                 .getAnnotation(Update.class).value()[0];
         assertThat(upsert).contains("ON DUPLICATE KEY UPDATE");
         assertThat(claim).contains("state IN ('PLANNED', 'FAILED')");
+    }
+
+    @Test
+    void applicationRegistersChunkMapperPackage() {
+        MapperScan scan = VideoMindApplication.class.getAnnotation(MapperScan.class);
+        assertThat(Arrays.asList(scan.value()))
+                .contains("com.videomind.module.task.analysis.chunk");
     }
 }
