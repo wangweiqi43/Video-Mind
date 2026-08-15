@@ -15,7 +15,8 @@ import org.springframework.stereotype.Component;
 public class MockSpeechToTextClient implements SpeechToTextClient {
 
     @Override
-    public AsrResult transcribe(AudioExtractionResult audio, VideoFile videoFile, TaskRecord taskRecord) {
+    public AsrResult transcribe(Long processingTaskId, AudioExtractionResult audio,
+                                VideoFile videoFile, TaskRecord taskRecord) {
         String text = """
                 这是 VideoMind 第三阶段生成的 Mock 转录文本。
                 视频文件：%s。

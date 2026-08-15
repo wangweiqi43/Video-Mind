@@ -51,7 +51,8 @@ public class TencentTimestampSpeechToTextClient implements SpeechToTextClient {
     }
 
     @Override
-    public AsrResult transcribe(AudioExtractionResult audio, VideoFile videoFile, TaskRecord taskRecord) {
+    public AsrResult transcribe(Long processingTaskId, AudioExtractionResult audio,
+                                VideoFile videoFile, TaskRecord taskRecord) {
         validateConfiguration();
         cancellation.checkVideoTask(taskRecord.getId());
         Path audioPath = Path.of(audio.getAudioPath());

@@ -34,7 +34,8 @@ public class RealSpeechToTextClient implements SpeechToTextClient {
     private final ObjectMapper objectMapper;
 
     @Override
-    public AsrResult transcribe(AudioExtractionResult audio, VideoFile videoFile, TaskRecord taskRecord) {
+    public AsrResult transcribe(Long processingTaskId, AudioExtractionResult audio,
+                                VideoFile videoFile, TaskRecord taskRecord) {
         AiProperties.ApiProvider asr = aiProperties.getAsr();
         AiApiSupport.requireConfigured("ASR", asr);
 

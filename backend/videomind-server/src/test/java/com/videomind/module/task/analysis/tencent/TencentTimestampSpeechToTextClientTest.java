@@ -46,7 +46,8 @@ class TencentTimestampSpeechToTextClientTest {
         TaskRecord task = new TaskRecord();
         task.setId(9L);
 
-        var result = client.transcribe(AudioExtractionResult.builder().audioPath(audioFile.toString()).build(),
+        var result = client.transcribe(99L,
+                AudioExtractionResult.builder().audioPath(audioFile.toString()).build(),
                 new VideoFile(), task);
 
         assertThat(result.getText()).isEqualTo("第一句");
@@ -85,7 +86,7 @@ class TencentTimestampSpeechToTextClientTest {
         TaskRecord task = new TaskRecord();
         task.setId(9L);
 
-        client.transcribe(AudioExtractionResult.builder().audioPath(audioFile.toString()).build(),
+        client.transcribe(99L, AudioExtractionResult.builder().audioPath(audioFile.toString()).build(),
                 new VideoFile(), task);
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);

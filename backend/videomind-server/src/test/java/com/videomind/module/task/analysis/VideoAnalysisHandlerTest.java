@@ -104,7 +104,7 @@ class VideoAnalysisHandlerTest {
                 .segments(List.of(new AsrSegmentResult(100, 900, "第一句", 0))).build();
         when(audio.extract(video, task)).thenReturn(AudioExtractionResult.builder()
                 .audioPath(audioFile.toString()).durationSeconds(2).build());
-        when(speech.transcribe(any(), eq(video), eq(task))).thenReturn(result);
+        when(speech.transcribe(eq(99L), any(), eq(video), eq(task))).thenReturn(result);
         when(artifacts.persistAsr(task, video, result)).thenAnswer(invocation -> {
             video.setTranscriptVersion(1);
             return 1;
@@ -152,7 +152,7 @@ class VideoAnalysisHandlerTest {
         handler.handle(context());
 
         verify(audio, never()).extract(any(), any());
-        verify(speech, never()).transcribe(any(), any(), any());
+        verify(speech, never()).transcribe(any(), any(), any(), any());
         verify(timeline, never()).recognize(any(), any());
         ArgumentCaptor<AsrResult> asr = ArgumentCaptor.forClass(AsrResult.class);
         verify(summary).summarize(asr.capture(), eq(video), eq(task));
@@ -168,7 +168,7 @@ class VideoAnalysisHandlerTest {
                 .segments(List.of(new AsrSegmentResult(0, 1_000, "Mock 分段", 0))).build();
         when(audio.extract(video, task)).thenReturn(AudioExtractionResult.builder()
                 .audioPath("mock://audio/task-11.wav").durationSeconds(1).build());
-        when(speech.transcribe(any(), eq(video), eq(task))).thenReturn(result);
+        when(speech.transcribe(eq(99L), any(), eq(video), eq(task))).thenReturn(result);
         when(artifacts.persistAsr(task, video, result)).thenAnswer(invocation -> {
             video.setTranscriptVersion(1);
             return 1;
@@ -191,7 +191,7 @@ class VideoAnalysisHandlerTest {
                 .segments(List.of(new AsrSegmentResult(0, 1_000, "不应落库", 0))).build();
         when(audio.extract(video, task)).thenReturn(AudioExtractionResult.builder()
                 .audioPath(audioFile.toString()).durationSeconds(1).build());
-        when(speech.transcribe(any(), eq(video), eq(task))).thenReturn(result);
+        when(speech.transcribe(eq(99L), any(), eq(video), eq(task))).thenReturn(result);
         doNothing().doNothing().doThrow(new TaskCancellationException())
                 .when(cancellation).checkProcessingTask(99L);
 

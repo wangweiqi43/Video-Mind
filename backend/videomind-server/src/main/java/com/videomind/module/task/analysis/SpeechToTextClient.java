@@ -7,6 +7,7 @@ import com.videomind.module.video.entity.VideoFile;
 
 public interface SpeechToTextClient {
 
-    AsrResult transcribe(AudioExtractionResult audio, VideoFile videoFile, TaskRecord taskRecord);
+    AsrResult transcribe(Long processingTaskId, AudioExtractionResult audio,
+                         VideoFile videoFile, TaskRecord taskRecord);
 }
 

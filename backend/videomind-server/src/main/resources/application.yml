@@ -148,6 +148,8 @@ videomind:
       chunk-seconds: ${TENCENT_ASR_CHUNK_SECONDS:120}
       chunk-overlap-millis: ${TENCENT_ASR_CHUNK_OVERLAP_MS:1000}
       max-inline-audio-bytes: ${TENCENT_ASR_MAX_INLINE_BYTES:5242880}
+      submission-unknown-timeout-seconds: ${TENCENT_ASR_SUBMISSION_UNKNOWN_TIMEOUT_SECONDS:120}
+      provider-task-ttl-hours: ${TENCENT_ASR_PROVIDER_TASK_TTL_HOURS:24}
     summary:
       mode: ${VIDEOMIND_SUMMARY_MODE:real}
       endpoint: ${SUMMARY_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}

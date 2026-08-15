@@ -82,7 +82,7 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
         } else {
             AudioExtractionResult audio = recoverOrExtractAudio(context.taskId(), data);
             cancellation.checkProcessingTask(context.taskId());
-            asr = speechToText.transcribe(audio, data.video(), data.task());
+            asr = speechToText.transcribe(context.taskId(), audio, data.video(), data.task());
             cancellation.checkProcessingTask(context.taskId());
             if (asr.getSegments() == null || asr.getSegments().isEmpty()) {
                 throw new IllegalStateException("ASR_TIMESTAMP_SEGMENTS_EMPTY");

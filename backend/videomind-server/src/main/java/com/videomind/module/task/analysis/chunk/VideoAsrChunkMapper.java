@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 public interface VideoAsrChunkMapper extends BaseMapper<VideoAsrChunk> {
@@ -75,4 +76,32 @@ public interface VideoAsrChunkMapper extends BaseMapper<VideoAsrChunk> {
             """)
     int markFailed(@Param("id") Long id, @Param("errorCode") String errorCode,
                    @Param("errorMessage") String errorMessage, @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE video_asr_chunk
+               SET state = 'FAILED', error_code = 'SUBMISSION_OUTCOME_UNKNOWN',
+                   error_message = 'ASR create request outcome was not persisted before timeout',
+                   completed_time = #{now}, updated_time = #{now}
+             WHERE id = #{id} AND state = 'SUBMITTING' AND updated_time < #{cutoff}
+            """)
+    int recoverStaleSubmitting(@Param("id") Long id, @Param("cutoff") LocalDateTime cutoff,
+                               @Param("now") LocalDateTime now);
+
+    @Update("""
+            UPDATE video_asr_chunk
+               SET state = 'FAILED', error_code = 'PROVIDER_TASK_EXPIRED',
+                   error_message = 'Tencent ASR task id exceeded its 24 hour validity window',
+                   completed_time = #{now}, updated_time = #{now}
+             WHERE id = #{id} AND state = 'SUBMITTED' AND submitted_time < #{cutoff}
+            """)
+    int expireSubmitted(@Param("id") Long id, @Param("cutoff") LocalDateTime cutoff,
+                        @Param("now") LocalDateTime now);
+
+    @Select("""
+            SELECT * FROM video_asr_chunk
+             WHERE processing_task_id = #{processingTaskId}
+             ORDER BY chunk_index
+            """)
+    java.util.List<VideoAsrChunk> selectByProcessingTaskId(
+            @Param("processingTaskId") Long processingTaskId);
 }

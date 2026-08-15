@@ -17,4 +17,6 @@ public class TencentAsrProperties {
     private int chunkSeconds = 120;
     private int chunkOverlapMillis = 1_000;
     private long maxInlineAudioBytes = 5L * 1024 * 1024;
+    private int submissionUnknownTimeoutSeconds = 120;
+    private int providerTaskTtlHours = 24;
 }

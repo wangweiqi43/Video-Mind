@@ -14,7 +14,7 @@ class MockSpeechToTextClientTest {
     void providesTimestampedSegmentsForTheTimelinePipeline() {
         VideoFile video = new VideoFile();
         video.setOriginalFilename("demo.mp4");
-        var result = client.transcribe(AudioExtractionResult.builder()
+        var result = client.transcribe(99L, AudioExtractionResult.builder()
                 .audioPath("mock://audio/task-1.wav").durationSeconds(180).build(), video, new TaskRecord());
 
         assertThat(result.getText()).isNotBlank();
