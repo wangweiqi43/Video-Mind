@@ -11,6 +11,7 @@ param(
     [switch]$KeepData,
     [switch]$KeepArtifacts,
     [switch]$FixtureOnly,
+    [switch]$PreflightOnly,
     [switch]$ValidateOnly
 )
 
@@ -135,7 +136,7 @@ function Resolve-Executable {
         [Parameter(Mandatory = $true)][string[]]$Candidates,
         [Parameter(Mandatory = $true)][string]$CommandName
     )
-    $configured = [Environment]::GetEnvironmentVariable($EnvironmentName, "Process")
+    $configured = Get-ConfiguredEnvironmentValue -Name $EnvironmentName
     if ($configured -and (Test-Path -LiteralPath $configured)) {
         return (Resolve-Path -LiteralPath $configured).Path
     }
@@ -383,7 +384,8 @@ if ($ValidateOnly) {
 
 if ($FixtureOnly) {
     $fixtureFfmpeg = Resolve-Executable -EnvironmentName "FFMPEG_BINARY_PATH" `
-        -Candidates @("E:\FFmpeg\bin\ffmpeg.exe") -CommandName "ffmpeg.exe"
+        -Candidates @((Join-Path $repoRoot "runtime\tools\ffmpeg-8.1.2-essentials_build\bin\ffmpeg.exe"),
+            "E:\FFmpeg\bin\ffmpeg.exe") -CommandName "ffmpeg.exe"
     New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
     try {
         New-MinimalPdf -Path $pdfPath -Token $documentToken
@@ -415,25 +417,48 @@ foreach ($name in @("TENCENT_CLOUD_SECRET_ID", "TENCENT_CLOUD_SECRET_KEY", "SILI
 }
 Write-Host "[OK] Required external API environment variables are present; values were not displayed."
 
+$physicalMemoryBytes = $null
 try {
-    $physicalMemoryGiB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
-    if ($physicalMemoryGiB -lt 16) {
-        throw "Real MinerU E2E requires at least 16 GiB physical memory; detected $physicalMemoryGiB GiB"
-    }
-    Write-Host "[OK] Physical memory satisfies MinerU CPU requirement: $physicalMemoryGiB GiB"
+    $physicalMemoryBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
 } catch {
-    if ($_.Exception.Message -like "Real MinerU E2E requires*") { throw }
+    try {
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $physicalMemoryBytes = ([Microsoft.VisualBasic.Devices.ComputerInfo]::new()).TotalPhysicalMemory
+    } catch {
+        $physicalMemoryBytes = $null
+    }
+}
+if ($null -eq $physicalMemoryBytes) {
     throw "Unable to verify physical memory. Real E2E refuses to continue."
 }
+$physicalMemoryGiB = [math]::Round($physicalMemoryBytes / 1GB, 1)
+if ($physicalMemoryBytes -lt 16000000000) {
+    throw "Real MinerU E2E requires at least 16 GiB physical memory; detected $physicalMemoryGiB GiB"
+}
+Write-Host "[OK] Physical memory satisfies MinerU CPU requirement: $physicalMemoryGiB GiB"
 
 $ffmpeg = Resolve-Executable -EnvironmentName "FFMPEG_BINARY_PATH" `
-    -Candidates @("E:\FFmpeg\bin\ffmpeg.exe") -CommandName "ffmpeg.exe"
+    -Candidates @((Join-Path $repoRoot "runtime\tools\ffmpeg-8.1.2-essentials_build\bin\ffmpeg.exe"),
+        "E:\FFmpeg\bin\ffmpeg.exe") -CommandName "ffmpeg.exe"
 $null = Resolve-Executable -EnvironmentName "FFPROBE_BINARY_PATH" `
-    -Candidates @("E:\FFmpeg\bin\ffprobe.exe") -CommandName "ffprobe.exe"
+    -Candidates @((Join-Path $repoRoot "runtime\tools\ffmpeg-8.1.2-essentials_build\bin\ffprobe.exe"),
+        "E:\FFmpeg\bin\ffprobe.exe") -CommandName "ffprobe.exe"
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw "docker.exe was not found in PATH" }
 
 $health = Invoke-RestMethod -Method Get -Uri "$localBaseUrl/actuator/health" -TimeoutSec 5
 Assert-Condition -Condition ([string]$health.status -eq "UP") -Message "VideoMind backend is not healthy"
+
+if ($PreflightOnly) {
+    $requiredServices = @("mysql", "minio", "rocketmq-namesrv", "rocketmq-broker", "redis-stack",
+        "redis-cache", "elasticsearch", "mineru", "paddleocr")
+    $runningServices = @(& docker compose --project-directory $repoRoot ps --status running --services 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw "Unable to inspect the local Docker Compose stack" }
+    $missingServices = @($requiredServices | Where-Object { $_ -notin $runningServices })
+    Assert-Condition -Condition ($missingServices.Count -eq 0) `
+        -Message "Local Compose services are not all running: $($missingServices -join ', ')"
+    Write-Host "[OK] Real E2E preflight passed; no external API call was made and no credential value was displayed."
+    exit 0
+}
 
 New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
 New-MinimalPdf -Path $pdfPath -Token $documentToken

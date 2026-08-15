@@ -17,7 +17,15 @@ $maven = $mavenCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-
 $nodeDir = "E:\NodeJS"
 $npm = Join-Path $nodeDir "npm.cmd"
 $javaHome = "E:\Java"
-$ffmpeg = "E:\FFmpeg\bin\ffmpeg.exe"
+$bundledFfmpegBin = Join-Path $runtimeDir "tools\ffmpeg-8.1.2-essentials_build\bin"
+$ffmpeg = @(
+    (Join-Path $bundledFfmpegBin "ffmpeg.exe"),
+    "E:\FFmpeg\bin\ffmpeg.exe"
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+$ffprobe = @(
+    (Join-Path $bundledFfmpegBin "ffprobe.exe"),
+    "E:\FFmpeg\bin\ffprobe.exe"
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 $backendLog = Join-Path $logDir "backend-start.out.log"
 $backendErrorLog = Join-Path $logDir "backend-start.err.log"
 $frontendLog = Join-Path $logDir "frontend-start.out.log"
@@ -252,8 +260,15 @@ if (Test-Path -LiteralPath (Join-Path $javaHome "bin\java.exe")) {
     $env:JAVA_HOME = $javaHome
     $env:PATH = "$javaHome\bin;$env:PATH"
 }
-if (Test-Path -LiteralPath $ffmpeg) {
+if ($ffmpeg -and (Test-Path -LiteralPath $ffmpeg)) {
     $env:FFMPEG_BINARY_PATH = $ffmpeg
+} else {
+    throw "ffmpeg.exe was not found. Configure FFMPEG_BINARY_PATH or install the bundled runtime tool."
+}
+if ($ffprobe -and (Test-Path -LiteralPath $ffprobe)) {
+    $env:FFPROBE_BINARY_PATH = $ffprobe
+} else {
+    throw "ffprobe.exe was not found. Configure FFPROBE_BINARY_PATH or install the bundled runtime tool."
 }
 $env:PATH = "$nodeDir;$env:PATH"
 
