@@ -25,6 +25,7 @@ public class PlannerExecutorCriticWorkflow {
 
     public Result run(Request request) {
         validate(request);
+        request.cancellation().check();
         java.time.Instant deadline = clock.now().plus(request.deadline());
         Plan plan = null;
         Critique critique = null;
@@ -32,10 +33,12 @@ public class PlannerExecutorCriticWorkflow {
         int toolCalls = 0;
         int replans = 0;
         while (true) {
+            request.cancellation().check();
             if (expired(deadline)) {
                 return result(request, Status.DEADLINE_EXCEEDED, plan, audit, replans, toolCalls, "工作流超过 deadline");
             }
             plan = planner.plan(request, plan, critique, replans);
+            request.cancellation().check();
             emit(request, new WorkflowEvent("PLAN", plan.generation(), "plan-" + plan.generation(), null,
                     "COMPLETED", "计划已生成：" + plan.route(), 0, List.of()));
             if (expired(deadline)) {
@@ -44,6 +47,7 @@ public class PlannerExecutorCriticWorkflow {
             }
             List<StepResult> round = new ArrayList<>();
             for (var step : plan.steps()) {
+                request.cancellation().check();
                 if (toolCalls >= request.maxToolCalls()) {
                     return result(request, Status.TOOL_BUDGET_EXCEEDED, plan, audit, replans, toolCalls,
                             "工具调用次数超过预算");
@@ -58,6 +62,7 @@ public class PlannerExecutorCriticWorkflow {
                 StepResult value;
                 try {
                     value = executor.execute(request, step);
+                    request.cancellation().check();
                 } catch (RuntimeException failure) {
                     emit(request, new WorkflowEvent("TOOL", plan.generation(), step.id(), step.tool(),
                             "FAILED", "工具调用失败", elapsedMs(stepStart), List.of()));
@@ -75,6 +80,7 @@ public class PlannerExecutorCriticWorkflow {
                 }
             }
             critique = critic.review(request, plan, round, replans);
+            request.cancellation().check();
             emit(request, new WorkflowEvent("CRITIC", plan.generation(), "critic-" + plan.generation(), null,
                     critique.verdict().name(), critique.reason(), 0, round.stream()
                     .flatMap(value -> value.evidence().stream())

@@ -12,6 +12,7 @@ import com.videomind.module.agent.workflow.PlannerExecutorCriticWorkflow;
 import com.videomind.module.agent.workflow.WorkflowObserver;
 import com.videomind.module.chat.dto.ChatMessageRequest;
 import com.videomind.module.chat.dto.ChatMessageResponse;
+import com.videomind.module.chat.dto.ChatGenerationStatusResponse;
 import com.videomind.module.chat.dto.ChatSessionCreateResponse;
 import com.videomind.module.chat.dto.ChatSessionResponse;
 import com.videomind.module.chat.dto.ConversationContext;
@@ -19,6 +20,9 @@ import com.videomind.module.chat.dto.RagReference;
 import com.videomind.module.chat.dto.WorkflowSseEvent;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
+import com.videomind.module.chat.generation.ChatGenerationCancelledException;
+import com.videomind.module.chat.generation.ChatGenerationCancellationRegistry;
+import com.videomind.module.chat.generation.ChatGenerationCancellationToken;
 import com.videomind.module.chat.llm.ChatAnswerClient;
 import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.mapper.ChatSessionMapper;
@@ -33,6 +37,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -56,6 +61,7 @@ public class ChatServiceImpl implements ChatService {
     private final KnowledgeBaseService knowledgeBaseService;
     private final PlannerExecutorCriticWorkflow workflow;
     private final WorkflowAuditService workflowAudits;
+    private final ChatGenerationCancellationRegistry generationCancellations;
 
     @Override
     public ChatSessionCreateResponse createSession(Long videoId, List<Long> selectedKnowledgeBaseIds, Long userId) {
@@ -92,19 +98,28 @@ public class ChatServiceImpl implements ChatService {
         List<Long> scope = sessionScope(session, userId);
         ConversationContext context = conversationContextService.getContext(session.getId(), userId, scope);
         insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
-        RetrievalOutcome retrieved = retrieve(request, userId, session, WorkflowObserver.NOOP);
+        RetrievalOutcome retrieved = retrieve(request, userId, session, WorkflowObserver.NOOP, ignored -> { });
         try {
+            retrieved.cancellation().check();
             String answer = chatAnswerClient.answer(request.getQuestion(), retrieved.references(),
                     turnAssembler.toMessages(context.getRecentTurns(), userId), summary(context),
                     request.getAnswerScope());
+            retrieved.cancellation().check();
+            if (!retrieved.audit().answerCompleted(answer)) {
+                throw new ChatGenerationCancelledException(retrieved.audit().generationId());
+            }
             ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
                     answer, json(retrieved.references()));
             finishTurn(session, userId, request.getQuestion(), answer);
-            retrieved.audit().answerCompleted(answer);
             return response(assistant, retrieved.references());
+        } catch (ChatGenerationCancelledException cancelled) {
+            retrieved.audit().cancelled(null);
+            throw cancelled;
         } catch (RuntimeException failure) {
             retrieved.audit().failed(failure);
             throw failure;
+        } finally {
+            generationCancellations.release(retrieved.audit().generationId());
         }
     }
 
@@ -134,27 +149,41 @@ public class ChatServiceImpl implements ChatService {
 
     private void doStream(ChatMessageRequest request, Long userId, SseEmitter emitter) {
         WorkflowAuditService.Session audit = null;
+        ChatGenerationCancellationToken cancellation = null;
+        StringBuilder answer = new StringBuilder();
         try {
             ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
             List<Long> scope = sessionScope(session, userId);
             ConversationContext context = conversationContextService.getContext(session.getId(), userId, scope);
             insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
             RetrievalOutcome retrieved = retrieve(request, userId, session,
-                    event -> sendEvent(emitter, "workflow", WorkflowSseEvent.from(event)));
+                    event -> sendEvent(emitter, "workflow", WorkflowSseEvent.from(event)),
+                    generationId -> sendEvent(emitter, "generation",
+                            new ChatGenerationStatusResponse(generationId, "RUNNING")));
             audit = retrieved.audit();
+            cancellation = retrieved.cancellation();
             List<RagReference> references = retrieved.references();
             List<ChatMessage> recent = turnAssembler.toMessages(context.getRecentTurns(), userId);
-            StringBuilder answer = new StringBuilder();
             chatAnswerClient.streamAnswer(request.getQuestion(), references, recent, summary(context),
                     request.getAnswerScope(), delta -> {
                         answer.append(delta);
                         sendEvent(emitter, "delta", Map.of("delta", delta));
-                    });
+                    }, cancellation);
+            cancellation.check();
+            if (!audit.answerCompleted(answer.toString())) {
+                throw new ChatGenerationCancelledException(audit.generationId());
+            }
             ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
                     answer.toString(), json(references));
             finishTurn(session, userId, request.getQuestion(), answer.toString());
-            audit.answerCompleted(answer.toString());
             sendEvent(emitter, "done", response(assistant, references));
+            emitter.complete();
+        } catch (ChatGenerationCancelledException cancelled) {
+            if (audit != null) {
+                audit.cancelled(answer.toString());
+            }
+            sendEvent(emitter, "cancelled",
+                    new ChatGenerationStatusResponse(cancelled.generationId(), "CANCELLED"));
             emitter.complete();
         } catch (Exception exception) {
             if (audit != null) {
@@ -162,30 +191,42 @@ public class ChatServiceImpl implements ChatService {
             }
             sendEvent(emitter, "error", exception.getMessage());
             emitter.complete();
+        } finally {
+            Long generationId = audit == null ? null : audit.generationId();
+            if (generationId != null) {
+                generationCancellations.release(generationId);
+            }
         }
     }
 
     private RetrievalOutcome retrieve(ChatMessageRequest request, Long userId, ChatSession session,
-                                      WorkflowObserver downstream) {
+                                       WorkflowObserver downstream, Consumer<Long> onGenerationStarted) {
         List<Long> scope = sessionScope(session, userId);
         boolean deep = Boolean.TRUE.equals(request.getDeepThinkingEnabled());
         AgentWorkflowModels.Mode mode = deep ? AgentWorkflowModels.Mode.DEEP : AgentWorkflowModels.Mode.STANDARD;
         AgentWorkflowModels.Request base = new AgentWorkflowModels.Request(userId, session.getId(), scope,
                 request.getQuestion(), mode);
         WorkflowAuditService.Session audit = workflowAudits.start(base, downstream);
+        ChatGenerationCancellationToken cancellation = generationCancellations.activate(audit.generationId());
+        onGenerationStarted.accept(audit.generationId());
         AgentWorkflowModels.Result result;
         try {
             result = workflow.run(new AgentWorkflowModels.Request(userId, session.getId(), scope,
-                    request.getQuestion(), mode, audit));
+                    request.getQuestion(), mode, audit, cancellation::check));
             audit.workflowFinished(result);
+        } catch (ChatGenerationCancelledException cancelled) {
+            audit.cancelled(null);
+            generationCancellations.release(audit.generationId());
+            throw cancelled;
         } catch (RuntimeException failure) {
             audit.failed(failure);
+            generationCancellations.release(audit.generationId());
             throw failure;
         }
         Long videoKnowledgeBaseId = scope.isEmpty() ? null : scope.get(0);
         List<RagReference> references = result.evidence().stream()
                 .map(evidence -> reference(evidence, session.getVideoId(), videoKnowledgeBaseId)).toList();
-        return new RetrievalOutcome(references, audit);
+        return new RetrievalOutcome(references, audit, cancellation);
     }
 
     private RagReference reference(Evidence value, Long videoId, Long videoKnowledgeBaseId) {
@@ -292,5 +333,6 @@ public class ChatServiceImpl implements ChatService {
         return !StringUtils.hasText(value) || value.length() <= max ? value : value.substring(0, max) + "...";
     }
 
-    private record RetrievalOutcome(List<RagReference> references, WorkflowAuditService.Session audit) { }
+    private record RetrievalOutcome(List<RagReference> references, WorkflowAuditService.Session audit,
+                                    ChatGenerationCancellationToken cancellation) { }
 }

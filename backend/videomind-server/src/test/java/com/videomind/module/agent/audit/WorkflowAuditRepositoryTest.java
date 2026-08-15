@@ -2,6 +2,7 @@ package com.videomind.module.agent.audit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -58,9 +59,6 @@ class WorkflowAuditRepositoryTest {
         assertThat(executionUpdates.getValue().getRoute()).isEqualTo("VIDEO_TIMELINE");
         assertThat(executionUpdates.getValue().getToolCalls()).isEqualTo(2);
 
-        ArgumentCaptor<ChatGeneration> generationUpdates = ArgumentCaptor.forClass(ChatGeneration.class);
-        verify(generations).updateById(generationUpdates.capture());
-        assertThat(generationUpdates.getValue().getStatus()).isEqualTo("SUCCESS");
-        assertThat(generationUpdates.getValue().getPartialAnswer()).isEqualTo("答案");
+        verify(generations).markSuccess(eq(61L), eq("答案"), any());
     }
 }

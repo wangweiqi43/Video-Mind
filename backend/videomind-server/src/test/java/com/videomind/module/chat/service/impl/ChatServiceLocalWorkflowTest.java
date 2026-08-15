@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +21,7 @@ import com.videomind.module.chat.dto.ChatMessageRequest;
 import com.videomind.module.chat.dto.ConversationContext;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
+import com.videomind.module.chat.generation.ChatGenerationCancellationRegistry;
 import com.videomind.module.chat.llm.ChatAnswerClient;
 import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.mapper.ChatSessionMapper;
@@ -48,8 +51,10 @@ class ChatServiceLocalWorkflowTest {
     private final PlannerExecutorCriticWorkflow workflow = mock(PlannerExecutorCriticWorkflow.class);
     private final WorkflowAuditService workflowAudits = mock(WorkflowAuditService.class);
     private final WorkflowAuditService.Session audit = mock(WorkflowAuditService.Session.class);
+    private final ChatGenerationCancellationRegistry generationCancellations =
+            new ChatGenerationCancellationRegistry();
     private final ChatServiceImpl service = new ChatServiceImpl(sessions, messages, answers, contexts, summaries,
-            turns, new ObjectMapper(), videos, knowledgeBases, workflow, workflowAudits);
+            turns, new ObjectMapper(), videos, knowledgeBases, workflow, workflowAudits, generationCancellations);
 
     @BeforeEach
     void setUp() {
@@ -57,6 +62,8 @@ class ChatServiceLocalWorkflowTest {
                 ChatSession.class);
         when(videos.getVideoDetail(7L, 99L)).thenReturn(new VideoFile());
         when(workflowAudits.start(any(), any())).thenReturn(audit);
+        when(audit.generationId()).thenReturn(61L);
+        when(audit.answerCompleted(any())).thenReturn(true);
     }
 
     @Test
@@ -125,6 +132,35 @@ class ChatServiceLocalWorkflowTest {
         ArgumentCaptor<LambdaQueryWrapper<ChatSession>> query = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
         verify(sessions).selectList(query.capture());
         assertThat(query.getValue().getSqlSegment()).contains("user_id", "video_id").doesNotContain("application_mode");
+    }
+
+    @Test
+    void stopsAnActiveStreamBeforeCallingTheAnswerModel() {
+        ChatSession session = session();
+        when(sessions.selectOne(any())).thenReturn(session);
+        when(knowledgeBases.requireReadyConversationScope(99L, 7L, List.of()))
+                .thenReturn(List.of(10L, 20L));
+        ConversationContext context = ConversationContext.builder().conversationId(13L)
+                .recentTurns(List.of()).build();
+        when(contexts.getContext(13L, 99L, List.of(10L, 20L))).thenReturn(context);
+        when(workflow.run(any())).thenAnswer(invocation -> {
+            AgentWorkflowModels.Request value = invocation.getArgument(0);
+            while (true) {
+                value.cancellation().check();
+                Thread.sleep(5);
+            }
+        });
+        ChatMessageRequest request = new ChatMessageRequest();
+        request.setSessionId(13L);
+        request.setVideoId(7L);
+        request.setQuestion("停止这一轮回答");
+
+        service.streamMessage(request, 99L);
+        verify(workflow, timeout(2_000)).run(any());
+        generationCancellations.requestCancellation(61L);
+
+        verify(audit, timeout(2_000)).cancelled(null);
+        verify(answers, never()).streamAnswer(any(), any(), any(), any(), any(), any(), any());
     }
 
     private ChatSession session() {

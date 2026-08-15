@@ -1,6 +1,7 @@
 package com.videomind.module.agent.workflow;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -20,6 +21,7 @@ import com.videomind.module.knowledge.retrieval.Evidence;
 import java.util.List;
 import java.util.ArrayList;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class PlannerExecutorCriticWorkflowTest {
@@ -133,5 +135,23 @@ class PlannerExecutorCriticWorkflowTest {
                 .containsExactly("PLAN:COMPLETED", "TOOL:STARTED", "TOOL:COMPLETED",
                         "CRITIC:ACCEPT", "WORKFLOW:COMPLETED");
         assertThat(events.get(2).evidenceIds()).containsExactly("ev-1");
+    }
+
+    @Test
+    void stopsBeforeExecutingToolsWhenCancellationIsRequestedAfterPlanning() {
+        AtomicInteger checks = new AtomicInteger();
+        WorkflowCancellation cancellation = () -> {
+            if (checks.incrementAndGet() >= 3) {
+                throw new WorkflowCancelledException("cancelled");
+            }
+        };
+        Request cancellable = new Request(7L, 51L, List.of(11L), "q", Mode.STANDARD,
+                WorkflowObserver.NOOP, cancellation);
+        when(planner.plan(any(), any(), any(), any(Integer.class))).thenReturn(plan);
+
+        assertThatThrownBy(() -> workflow.run(cancellable))
+                .isInstanceOf(WorkflowCancelledException.class);
+
+        verify(executor, never()).execute(any(), any());
     }
 }

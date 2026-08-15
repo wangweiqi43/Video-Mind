@@ -26,7 +26,10 @@ public class ModeAwareAgentPlanner implements AgentPlanner {
             return rules.plan(request, previous, critique, generation);
         }
         try {
-            return decisions.run(() -> structured.plan(request, previous, critique, generation), decisionTimeout());
+            return decisions.run(() -> structured.plan(request, previous, critique, generation),
+                    decisionTimeout(), request.cancellation());
+        } catch (WorkflowCancelledException cancelled) {
+            throw cancelled;
         } catch (RuntimeException failure) {
             log.warn("Structured workflow planner failed; using bounded rules, generation={}, reason={}",
                     generation, failure.getClass().getSimpleName());

@@ -22,12 +22,27 @@ public class WorkflowDecisionRunner {
             }, new ThreadPoolExecutor.AbortPolicy());
 
     public <T> T run(Supplier<T> decision, long timeoutMillis) {
+        return run(decision, timeoutMillis, WorkflowCancellation.NONE);
+    }
+
+    public <T> T run(Supplier<T> decision, long timeoutMillis, WorkflowCancellation cancellation) {
         Future<T> future = executor.submit(decision::get);
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
         try {
-            return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException timeout) {
-            future.cancel(true);
-            throw new IllegalStateException("WORKFLOW_DECISION_TIMEOUT", timeout);
+            while (true) {
+                cancellation.check();
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    future.cancel(true);
+                    throw new IllegalStateException("WORKFLOW_DECISION_TIMEOUT");
+                }
+                try {
+                    return future.get(Math.min(TimeUnit.MILLISECONDS.toNanos(100), remainingNanos),
+                            TimeUnit.NANOSECONDS);
+                } catch (TimeoutException pollingTimeout) {
+                    // Poll cancellation until the overall decision deadline expires.
+                }
+            }
         } catch (InterruptedException interrupted) {
             future.cancel(true);
             Thread.currentThread().interrupt();
@@ -38,6 +53,9 @@ public class WorkflowDecisionRunner {
                 throw runtime;
             }
             throw new IllegalStateException("WORKFLOW_DECISION_FAILED", cause);
+        } catch (RuntimeException cancelledOrFailed) {
+            future.cancel(true);
+            throw cancelledOrFailed;
         }
     }
 

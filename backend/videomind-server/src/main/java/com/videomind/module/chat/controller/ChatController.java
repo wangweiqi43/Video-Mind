@@ -4,11 +4,13 @@ import com.videomind.common.api.ApiResponse;
 import com.videomind.common.context.MockUserContext;
 import com.videomind.module.chat.dto.ChatMessageRequest;
 import com.videomind.module.chat.dto.ChatMessageResponse;
+import com.videomind.module.chat.dto.ChatGenerationStatusResponse;
 import com.videomind.module.chat.dto.ChatSessionCreateRequest;
 import com.videomind.module.chat.dto.ChatSessionCreateResponse;
 import com.videomind.module.chat.dto.ChatSessionResponse;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.service.ChatService;
+import com.videomind.module.chat.generation.ChatGenerationCancellationService;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,6 +29,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class ChatController {
 
     private final ChatService chatService;
+    private final ChatGenerationCancellationService generationCancellations;
 
     @PostMapping("/session")
     public ApiResponse<ChatSessionCreateResponse> createSession(@Valid @RequestBody ChatSessionCreateRequest request) {
@@ -76,5 +79,11 @@ public class ChatController {
             @RequestParam Long videoId
     ) {
         return ApiResponse.success(chatService.listMessages(sessionId, videoId, MockUserContext.currentUserId()));
+    }
+
+    @PostMapping("/generations/{generationId}/cancel")
+    public ApiResponse<ChatGenerationStatusResponse> cancelGeneration(@PathVariable Long generationId) {
+        return ApiResponse.success(generationCancellations.requestCancellation(
+                generationId, MockUserContext.currentUserId()));
     }
 }

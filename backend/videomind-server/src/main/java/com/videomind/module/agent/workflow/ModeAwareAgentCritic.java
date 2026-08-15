@@ -29,7 +29,10 @@ public class ModeAwareAgentCritic implements AgentCritic {
             return safety;
         }
         try {
-            return decisions.run(() -> structured.review(request, plan, results, replans), decisionTimeout());
+            return decisions.run(() -> structured.review(request, plan, results, replans),
+                    decisionTimeout(), request.cancellation());
+        } catch (WorkflowCancelledException cancelled) {
+            throw cancelled;
         } catch (RuntimeException failure) {
             log.warn("Structured workflow critic failed; using evidence rules, replan={}, reason={}",
                     replans, failure.getClass().getSimpleName());

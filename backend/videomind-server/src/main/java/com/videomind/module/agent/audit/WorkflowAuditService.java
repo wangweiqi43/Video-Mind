@@ -54,8 +54,12 @@ public class WorkflowAuditService {
             repository.finishExecution(executionId, result);
         }
 
-        public void answerCompleted(String answer) {
-            repository.completeGeneration(generationId, answer);
+        public boolean answerCompleted(String answer) {
+            return repository.completeGeneration(generationId, answer);
+        }
+
+        public void cancelled(String partialAnswer) {
+            repository.cancel(generationId, executionId, partialAnswer);
         }
 
         public void failed(Throwable failure) {

@@ -79,14 +79,18 @@ public class WorkflowAuditRepository {
         executions.updateById(execution);
     }
 
-    public void completeGeneration(Long generationId, String answer) {
-        ChatGeneration generation = new ChatGeneration();
-        generation.setId(generationId);
-        generation.setStatus("SUCCESS");
-        generation.setPartialAnswer(answer);
-        generation.setFinishedTime(LocalDateTime.now());
-        generation.setUpdatedTime(generation.getFinishedTime());
-        generations.updateById(generation);
+    public boolean completeGeneration(Long generationId, String answer) {
+        return generations.markSuccess(generationId, answer, LocalDateTime.now()) == 1;
+    }
+
+    public void cancel(Long generationId, Long executionId, String partialAnswer) {
+        LocalDateTime now = LocalDateTime.now();
+        AgentExecution execution = new AgentExecution();
+        execution.setId(executionId);
+        execution.setState("CANCELLED");
+        execution.setUpdatedTime(now);
+        executions.updateById(execution);
+        generations.markCancelled(generationId, partialAnswer, now);
     }
 
     public void fail(Long generationId, Long executionId, Throwable failure) {
@@ -96,14 +100,8 @@ public class WorkflowAuditRepository {
         execution.setState("FAILED");
         execution.setUpdatedTime(now);
         executions.updateById(execution);
-        ChatGeneration generation = new ChatGeneration();
-        generation.setId(generationId);
-        generation.setStatus("FAILED");
-        generation.setErrorCode(failure.getClass().getSimpleName());
-        generation.setErrorMessage(shorten(failure.getMessage(), 2048));
-        generation.setFinishedTime(now);
-        generation.setUpdatedTime(now);
-        generations.updateById(generation);
+        generations.markFailed(generationId, failure.getClass().getSimpleName(),
+                shorten(failure.getMessage(), 2048), now);
     }
 
     private String json(Object value) {

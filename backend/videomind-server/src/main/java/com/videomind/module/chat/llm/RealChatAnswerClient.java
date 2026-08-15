@@ -7,6 +7,8 @@ import com.videomind.config.AiProperties;
 import com.videomind.infrastructure.ai.AiApiSupport;
 import com.videomind.module.chat.dto.RagReference;
 import com.videomind.module.chat.entity.ChatMessage;
+import com.videomind.module.chat.generation.ChatGenerationCancelledException;
+import com.videomind.module.chat.generation.ChatGenerationCancellationToken;
 import com.videomind.module.chat.support.AnswerScopePolicy;
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -79,10 +81,24 @@ public class RealChatAnswerClient implements ChatAnswerClient {
             String answerScope,
             Consumer<String> onDelta
     ) {
+        streamAnswer(question, references, recentMessages, memorySummary, answerScope, onDelta, null);
+    }
+
+    @Override
+    public void streamAnswer(
+            String question,
+            List<RagReference> references,
+            List<ChatMessage> recentMessages,
+            String memorySummary,
+            String answerScope,
+            Consumer<String> onDelta,
+            ChatGenerationCancellationToken cancellation
+    ) {
         AiProperties.ApiProvider chat = aiProperties.getChat();
         AiApiSupport.requireConfigured("对话大模型", chat);
 
         try {
+            check(cancellation);
             Map<String, Object> requestBody = buildRequest(
                     question, references, recentMessages, memorySummary, answerScope, chat);
             requestBody.put("stream", true);
@@ -95,13 +111,19 @@ public class RealChatAnswerClient implements ChatAnswerClient {
 
             HttpResponse<InputStream> response = HttpClient.newHttpClient()
                     .send(request, HttpResponse.BodyHandlers.ofInputStream());
+            check(cancellation);
             if (response.statusCode() >= 400) {
                 throw new BizException(500, "对话 API 流式响应失败，HTTP " + response.statusCode());
             }
 
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+            InputStream responseBody = response.body();
+            if (cancellation != null) {
+                cancellation.onCancel(() -> closeQuietly(responseBody));
+            }
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(responseBody, StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
+                    check(cancellation);
                     if (!line.startsWith("data:")) {
                         continue;
                     }
@@ -111,14 +133,36 @@ public class RealChatAnswerClient implements ChatAnswerClient {
                     }
                     String delta = parseStreamDelta(data);
                     if (StringUtils.hasText(delta)) {
+                        check(cancellation);
                         onDelta.accept(delta);
                     }
                 }
+            } finally {
+                if (cancellation != null) {
+                    cancellation.clearCancelHook();
+                }
             }
+        } catch (ChatGenerationCancelledException cancelled) {
+            throw cancelled;
         } catch (BizException ex) {
             throw ex;
         } catch (Exception ex) {
+            check(cancellation);
             throw new BizException(500, "对话 API 流式调用失败：" + ex.getMessage());
+        }
+    }
+
+    private static void check(ChatGenerationCancellationToken cancellation) {
+        if (cancellation != null) {
+            cancellation.check();
+        }
+    }
+
+    private static void closeQuietly(InputStream input) {
+        try {
+            input.close();
+        } catch (Exception ignored) {
+            // The in-memory cancellation flag remains authoritative.
         }
     }
 
