@@ -145,6 +145,9 @@ videomind:
       poll-interval-millis: ${TENCENT_ASR_POLL_INTERVAL_MILLIS:1000}
       timeout-seconds: ${TENCENT_ASR_TIMEOUT_SECONDS:600}
       presigned-url-expiry-seconds: ${TENCENT_ASR_URL_EXPIRY_SECONDS:900}
+      chunk-seconds: ${TENCENT_ASR_CHUNK_SECONDS:120}
+      chunk-overlap-millis: ${TENCENT_ASR_CHUNK_OVERLAP_MS:1000}
+      max-inline-audio-bytes: ${TENCENT_ASR_MAX_INLINE_BYTES:5242880}
     summary:
       mode: ${VIDEOMIND_SUMMARY_MODE:real}
       endpoint: ${SUMMARY_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}
