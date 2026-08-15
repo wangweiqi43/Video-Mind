@@ -7,6 +7,7 @@ param(
     [ValidateRange(60, 7200)]
     [int]$TimeoutSeconds = 1800,
     [switch]$ExerciseBrokerRestart,
+    [switch]$LongAsr,
     [switch]$SkipCacheFailover,
     [switch]$KeepData,
     [switch]$KeepArtifacts,
@@ -152,6 +153,23 @@ function Resolve-Executable {
     throw "$CommandName was not found. Configure $EnvironmentName or add it to PATH."
 }
 
+function Get-MediaStreamDuration {
+    param(
+        [Parameter(Mandatory = $true)][string]$Ffprobe,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][ValidateSet("v:0", "a:0")][string]$Stream
+    )
+    $raw = & $Ffprobe -v error -select_streams $Stream -show_entries stream=duration `
+        -of "default=noprint_wrappers=1:nokey=1" $Path
+    if ($LASTEXITCODE -ne 0) { throw "ffprobe failed for stream $Stream" }
+    $value = 0.0
+    if (-not [double]::TryParse(([string]$raw).Trim(), [Globalization.NumberStyles]::Float,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$value)) {
+        throw "ffprobe returned an invalid duration for stream $Stream"
+    }
+    return $value
+}
+
 function New-MinimalPdf {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -195,15 +213,35 @@ function New-TimelineVideo {
         [Parameter(Mandatory = $true)][string]$Token
     )
     $speechScript = (("$Token. The video explains CAS lease ownership and checkpoint resume after a crash. " * 7).Trim())
+    New-SpeechWave -Path $WavePath -Text $speechScript
+    $font = "C\:/Windows/Fonts/arial.ttf"
+    $drawText = "drawtext=fontfile='$font':text='$Token CAS LEASE':fontcolor=white:fontsize=48:" +
+        "x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,0,19.9)'," +
+        "drawtext=fontfile='$font':text='$Token CHECKPOINT RESUME':fontcolor=white:fontsize=44:" +
+        "x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t,20)'"
+    & $Ffmpeg -hide_banner -loglevel error -y `
+        -f lavfi -i "color=c=black:s=1280x720:r=25:d=40" `
+        -i $WavePath -vf $drawText -af "apad" -t 40 `
+        -c:v libx264 -pix_fmt yuv420p -g 25 -c:a aac -b:a 96k $OutputPath
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutputPath)) {
+        throw "ffmpeg failed to create the E2E video"
+    }
+}
+
+function New-SpeechWave {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Text
+    )
     $speechGenerated = $false
     $speaker = $null
     try {
         Add-Type -AssemblyName System.Speech
         $speaker = [System.Speech.Synthesis.SpeechSynthesizer]::new()
         $speaker.Rate = -1
-        $speaker.SetOutputToWaveFile($WavePath)
-        $speaker.Speak($speechScript)
-        $speechGenerated = Test-Path -LiteralPath $WavePath
+        $speaker.SetOutputToWaveFile($Path)
+        $speaker.Speak($Text)
+        $speechGenerated = Test-Path -LiteralPath $Path
     } catch {
         $speechGenerated = $false
     } finally {
@@ -216,10 +254,10 @@ function New-TimelineVideo {
             $voice = New-Object -ComObject SAPI.SpVoice
             $waveStream = New-Object -ComObject SAPI.SpFileStream
             $waveStream.Format.Type = 22
-            $waveStream.Open($WavePath, 3, $false)
+            $waveStream.Open($Path, 3, $false)
             $voice.AudioOutputStream = $waveStream
-            $null = $voice.Speak($speechScript)
-            $speechGenerated = Test-Path -LiteralPath $WavePath
+            $null = $voice.Speak($Text)
+            $speechGenerated = Test-Path -LiteralPath $Path
         } finally {
             if ($null -ne $waveStream) {
                 try { $waveStream.Close() } catch { }
@@ -231,17 +269,37 @@ function New-TimelineVideo {
     if (-not $speechGenerated) {
         throw "No local Windows text-to-speech engine could create the E2E speech fixture"
     }
+}
+
+function New-LongAsrTimelineVideo {
+    param(
+        [Parameter(Mandatory = $true)][string]$Ffmpeg,
+        [Parameter(Mandatory = $true)][string]$OutputPath,
+        [Parameter(Mandatory = $true)][string]$WavePath,
+        [Parameter(Mandatory = $true)][string]$Token
+    )
+    $boundaryOne = [IO.Path]::Combine([IO.Path]::GetDirectoryName($WavePath), "speech-boundary-one.wav")
+    $boundaryTwo = [IO.Path]::Combine([IO.Path]::GetDirectoryName($WavePath), "speech-boundary-two.wav")
+    New-SpeechWave -Path $WavePath -Text "$Token. This is the opening evidence for long audio transcription."
+    New-SpeechWave -Path $boundaryOne -Text "$Token. Boundary one confirms checkpoint resume near two minutes."
+    New-SpeechWave -Path $boundaryTwo -Text "$Token. Boundary two confirms absolute timestamps near four minutes."
     $font = "C\:/Windows/Fonts/arial.ttf"
-    $drawText = "drawtext=fontfile='$font':text='$Token CAS LEASE':fontcolor=white:fontsize=48:" +
-        "x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,0,19.9)'," +
-        "drawtext=fontfile='$font':text='$Token CHECKPOINT RESUME':fontcolor=white:fontsize=44:" +
-        "x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t,20)'"
+    $drawText = "drawtext=fontfile='$font':text='$Token LONG ASR START':fontcolor=white:fontsize=30:" +
+        "x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,0,119.9)'," +
+        "drawtext=fontfile='$font':text='$Token BOUNDARY ONE':fontcolor=white:fontsize=30:" +
+        "x=(w-text_w)/2:y=(h-text_h)/2:enable='between(t,120,239.9)'," +
+        "drawtext=fontfile='$font':text='$Token BOUNDARY TWO':fontcolor=white:fontsize=30:" +
+        "x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t,240)'"
+    $audioMix = "[2:a]adelay=5000|5000[a0];[3:a]adelay=119000|119000[a1];" +
+        "[4:a]adelay=239000|239000[a2];[1:a][a0][a1][a2]amix=inputs=4:duration=first:dropout_transition=0[aout]"
     & $Ffmpeg -hide_banner -loglevel error -y `
-        -f lavfi -i "color=c=black:s=1280x720:r=25:d=40" `
-        -i $WavePath -vf $drawText -af "apad" -t 40 `
-        -c:v libx264 -pix_fmt yuv420p -g 25 -c:a aac -b:a 96k $OutputPath
+        -f lavfi -i "color=c=black:s=640x360:r=10:d=251" `
+        -f lavfi -t 250 -i "anullsrc=r=16000:cl=mono" `
+        -i $WavePath -i $boundaryOne -i $boundaryTwo `
+        -filter_complex $audioMix -map 0:v -map "[aout]" -vf $drawText -t 250 `
+        -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 10 -c:a aac -b:a 64k $OutputPath
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $OutputPath)) {
-        throw "ffmpeg failed to create the E2E video"
+        throw "ffmpeg failed to create the long ASR E2E video"
     }
 }
 
@@ -309,6 +367,23 @@ function Invoke-MySqlScalar {
     return [long]$value[0]
 }
 
+function Invoke-MySqlUtf8Text {
+    param([Parameter(Mandatory = $true)][string]$Sql)
+    $username = Get-ConfiguredEnvironmentValue -Name "MYSQL_USERNAME"
+    $password = Get-ConfiguredEnvironmentValue -Name "MYSQL_PASSWORD"
+    $database = Get-ConfiguredEnvironmentValue -Name "MYSQL_DATABASE"
+    if ([string]::IsNullOrWhiteSpace($username)) { $username = "root" }
+    if ([string]::IsNullOrWhiteSpace($password)) { $password = "root" }
+    if ([string]::IsNullOrWhiteSpace($database)) { $database = "videomind" }
+    $output = & docker compose --project-directory $script:repoRoot exec -T `
+        -e "MYSQL_PWD=$password" mysql mysql -N -B -u $username $database -e $Sql 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Local MySQL UTF-8 verification query failed" }
+    $encoded = @($output | ForEach-Object { [string]$_ } | Where-Object { $_ -match '^__VM__[A-Za-z0-9+/=]+$' } |
+        Select-Object -Last 1)
+    if ($encoded.Count -ne 1) { throw "Local MySQL UTF-8 verification did not return one value" }
+    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded[0].Substring(6)))
+}
+
 function Get-ElasticsearchCount {
     param([Parameter(Mandatory = $true)][long]$KnowledgeBaseId)
     $alias = Get-ConfiguredEnvironmentValue -Name "ELASTICSEARCH_INDEX_ALIAS"
@@ -359,6 +434,21 @@ function Test-HotSnapshotExists {
     return $LASTEXITCODE -eq 0 -and (($result | Select-Object -Last 1) -eq "1")
 }
 
+function Restart-BrokerDuringSecondAsrChunk {
+    param([Parameter(Mandatory = $true)][long]$VideoId)
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
+    do {
+        $submitted = Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_asr_chunk WHERE video_id=$VideoId AND chunk_index=1 AND state='SUBMITTED'"
+        if ($submitted -gt 0) {
+            Write-Host "[..] Restarting RocketMQ while ASR chunk 1 has a persisted provider task"
+            Invoke-ComposeService -Action restart -Service "rocketmq-broker"
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
+    throw "ASR chunk 1 never reached SUBMITTED before the broker restart deadline"
+}
+
 function Remove-E2eRemoteData {
     if ($null -ne $script:createdKnowledgeBaseId) {
         $deletion = Invoke-JsonApi -Method Delete -Path "/api/knowledge-bases/$script:createdKnowledgeBaseId"
@@ -386,13 +476,27 @@ if ($FixtureOnly) {
     $fixtureFfmpeg = Resolve-Executable -EnvironmentName "FFMPEG_BINARY_PATH" `
         -Candidates @((Join-Path $repoRoot "runtime\tools\ffmpeg-8.1.2-essentials_build\bin\ffmpeg.exe"),
             "E:\FFmpeg\bin\ffmpeg.exe") -CommandName "ffmpeg.exe"
+    $fixtureFfprobe = Resolve-Executable -EnvironmentName "FFPROBE_BINARY_PATH" `
+        -Candidates @((Join-Path $repoRoot "runtime\tools\ffmpeg-8.1.2-essentials_build\bin\ffprobe.exe"),
+            "E:\FFmpeg\bin\ffprobe.exe") -CommandName "ffprobe.exe"
     New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
     try {
         New-MinimalPdf -Path $pdfPath -Token $documentToken
-        New-TimelineVideo -Ffmpeg $fixtureFfmpeg -OutputPath $videoPath -WavePath $speechPath -Token $videoToken
-        $duration = 40.0
-        Assert-Condition -Condition ($duration -ge 30 -and $duration -le 60) `
-            -Message "Generated video duration must be between 30 and 60 seconds"
+        if ($LongAsr) {
+            New-LongAsrTimelineVideo -Ffmpeg $fixtureFfmpeg -OutputPath $videoPath `
+                -WavePath $speechPath -Token $videoToken
+            $duration = Get-MediaStreamDuration -Ffprobe $fixtureFfprobe -Path $videoPath -Stream "v:0"
+            $audioDuration = Get-MediaStreamDuration -Ffprobe $fixtureFfprobe -Path $videoPath -Stream "a:0"
+            Assert-Condition -Condition ($duration -ge 249.9 -and $duration -le 250.1) `
+                -Message "Generated long ASR video must be 250 seconds"
+            Assert-Condition -Condition ($audioDuration -ge 249.0) `
+                -Message "Generated long ASR fixture must contain a full-length audio stream"
+        } else {
+            New-TimelineVideo -Ffmpeg $fixtureFfmpeg -OutputPath $videoPath -WavePath $speechPath -Token $videoToken
+            $duration = Get-MediaStreamDuration -Ffprobe $fixtureFfprobe -Path $videoPath -Stream "v:0"
+            Assert-Condition -Condition ($duration -ge 30 -and $duration -le 60) `
+                -Message "Generated video duration must be between 30 and 60 seconds"
+        }
         Assert-Condition -Condition ((Get-Item -LiteralPath $videoPath).Length -gt 10000) `
             -Message "Generated video is unexpectedly small"
         $pdfBytes = [IO.File]::ReadAllBytes($pdfPath)
@@ -440,7 +544,7 @@ Write-Host "[OK] Physical memory satisfies MinerU CPU requirement: $physicalMemo
 $ffmpeg = Resolve-Executable -EnvironmentName "FFMPEG_BINARY_PATH" `
     -Candidates @((Join-Path $repoRoot "runtime\tools\ffmpeg-8.1.2-essentials_build\bin\ffmpeg.exe"),
         "E:\FFmpeg\bin\ffmpeg.exe") -CommandName "ffmpeg.exe"
-$null = Resolve-Executable -EnvironmentName "FFPROBE_BINARY_PATH" `
+$ffprobe = Resolve-Executable -EnvironmentName "FFPROBE_BINARY_PATH" `
     -Candidates @((Join-Path $repoRoot "runtime\tools\ffmpeg-8.1.2-essentials_build\bin\ffprobe.exe"),
         "E:\FFmpeg\bin\ffprobe.exe") -CommandName "ffprobe.exe"
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw "docker.exe was not found in PATH" }
@@ -462,7 +566,11 @@ if ($PreflightOnly) {
 
 New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
 New-MinimalPdf -Path $pdfPath -Token $documentToken
-New-TimelineVideo -Ffmpeg $ffmpeg -OutputPath $videoPath -WavePath $speechPath -Token $videoToken
+if ($LongAsr) {
+    New-LongAsrTimelineVideo -Ffmpeg $ffmpeg -OutputPath $videoPath -WavePath $speechPath -Token $videoToken
+} else {
+    New-TimelineVideo -Ffmpeg $ffmpeg -OutputPath $videoPath -WavePath $speechPath -Token $videoToken
+}
 
 $username = "e2e_$runId"
 $password = "VmE2e-$runId!"
@@ -474,13 +582,18 @@ try {
         -Body @{ username = $username; password = $password } -Anonymous
     $authHeaders = @{ Authorization = "Bearer $([string]$auth.accessToken)" }
 
-    Write-Host "[..] Uploading the 40-second multimodal fixture"
+    $fixtureDescription = if ($LongAsr) { "250-second chunked-ASR fixture" } else { "40-second multimodal fixture" }
+    Write-Host "[..] Uploading the $fixtureDescription"
     $video = Invoke-FileApi -Path "/api/videos/upload" -FilePath $videoPath -MediaType "video/mp4"
     $createdVideoId = [long]$video.videoId
     $analysis = Invoke-JsonApi -Method Post -Path "/api/tasks/analyze" -Body @{ videoId = $createdVideoId }
     if ($ExerciseBrokerRestart) {
-        Write-Host "[..] Restarting the local RocketMQ broker during processing"
-        Invoke-ComposeService -Action restart -Service "rocketmq-broker"
+        if ($LongAsr) {
+            Restart-BrokerDuringSecondAsrChunk -VideoId $createdVideoId
+        } else {
+            Write-Host "[..] Restarting the local RocketMQ broker during processing"
+            Invoke-ComposeService -Action restart -Service "rocketmq-broker"
+        }
     }
     $null = Wait-VideoTask -TaskId ([long]$analysis.taskId)
 
@@ -493,6 +606,19 @@ try {
     Assert-Condition -Condition ($asrCount -gt 0) -Message "No timestamped ASR segments were persisted"
     Assert-Condition -Condition ($ocrCount -gt 0) -Message "No keyframe OCR observations were persisted"
     Assert-Condition -Condition ($timelineCount -eq 1) -Message "No READY timeline was persisted"
+    $asrChunkCount = Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_asr_chunk WHERE video_id=$createdVideoId"
+    $succeededAsrChunkCount = Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_asr_chunk WHERE video_id=$createdVideoId AND state='SUCCEEDED'"
+    Assert-Condition -Condition ($asrChunkCount -ge 1 -and $asrChunkCount -eq $succeededAsrChunkCount) `
+        -Message "ASR chunk state is incomplete"
+    if ($LongAsr) {
+        Assert-Condition -Condition ($asrChunkCount -ge 3) -Message "Long ASR fixture did not create at least three chunks"
+        $boundaryOneCount = Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_asr_segment WHERE video_id=$createdVideoId AND start_ms BETWEEN 115000 AND 130000"
+        $boundaryTwoCount = Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_asr_segment WHERE video_id=$createdVideoId AND start_ms BETWEEN 235000 AND 250000"
+        $duplicateAsrCount = Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM (SELECT start_ms,end_ms,text,COUNT(*) c FROM video_asr_segment WHERE video_id=$createdVideoId GROUP BY start_ms,end_ms,text HAVING c>1) duplicate_segments"
+        Assert-Condition -Condition ($boundaryOneCount -gt 0) -Message "No absolute ASR timestamp was persisted near 120 seconds"
+        Assert-Condition -Condition ($boundaryTwoCount -gt 0) -Message "No absolute ASR timestamp was persisted near 240 seconds"
+        Assert-Condition -Condition ($duplicateAsrCount -eq 0) -Message "Overlapped ASR chunks created duplicate timestamped segments"
+    }
 
     $knowledgeBases = @(Invoke-JsonApi -Method Get -Path "/api/knowledge-bases")
     $videoKnowledgeBase = $knowledgeBases | Where-Object {
@@ -514,10 +640,19 @@ try {
     Assert-Condition -Condition ((Get-ElasticsearchCount -KnowledgeBaseId $createdKnowledgeBaseId) -gt 0) `
         -Message "Elasticsearch contains no PDF chunks"
     $timelineContent = Get-ElasticsearchContent -KnowledgeBaseId $videoKnowledgeBaseId
-    Assert-Condition -Condition ($timelineContent.Contains("CAS LEASE")) `
-        -Message "Indexed timeline has no speech evidence"
-    Assert-Condition -Condition ($timelineContent.Contains("CHECKPOINT RESUME")) `
-        -Message "Indexed timeline has no visual evidence"
+    if ($LongAsr) {
+        $speechProbe = Invoke-MySqlUtf8Text -Sql "SELECT CONCAT('__VM__',TO_BASE64(text)) FROM video_asr_segment WHERE video_id=$createdVideoId AND CHAR_LENGTH(TRIM(text))>0 ORDER BY start_ms LIMIT 1"
+        $visualProbe = Invoke-MySqlUtf8Text -Sql "SELECT CONCAT('__VM__',TO_BASE64(text)) FROM video_ocr_observation WHERE video_id=$createdVideoId AND CHAR_LENGTH(TRIM(text))>0 ORDER BY start_ms LIMIT 1"
+        Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($speechProbe) -and $timelineContent.Contains($speechProbe)) `
+            -Message "Indexed long timeline has no persisted ASR evidence"
+        Assert-Condition -Condition (-not [string]::IsNullOrWhiteSpace($visualProbe) -and $timelineContent.Contains($visualProbe)) `
+            -Message "Indexed long timeline has no persisted OCR evidence"
+    } else {
+        Assert-Condition -Condition ($timelineContent.Contains("CAS LEASE")) `
+            -Message "Indexed timeline has no speech evidence"
+        Assert-Condition -Condition ($timelineContent.Contains("CHECKPOINT RESUME")) `
+            -Message "Indexed timeline has no visual evidence"
+    }
 
     $repeat = Invoke-JsonApi -Method Post -Path "/api/tasks/analyze" -Body @{ videoId = $createdVideoId }
     Assert-Condition -Condition ([bool]$repeat.reused) -Message "Repeated analysis did not reuse the completed task"
@@ -525,6 +660,8 @@ try {
         -Message "Repeated analysis created a duplicate business task"
     Assert-Condition -Condition ((Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_timeline WHERE video_id=$createdVideoId") -eq 1) `
         -Message "Repeated analysis created duplicate timeline results"
+    Assert-Condition -Condition ((Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_asr_chunk WHERE video_id=$createdVideoId") -eq $asrChunkCount) `
+        -Message "Repeated analysis created duplicate ASR chunks"
 
     $session = Invoke-JsonApi -Method Post -Path "/api/chat/session" `
         -Body @{ videoId = $createdVideoId; knowledgeBaseIds = @($createdKnowledgeBaseId) }
@@ -579,6 +716,8 @@ try {
             -Message "Video knowledge chunks remain after physical deletion"
         Assert-Condition -Condition ((Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_asr_segment WHERE video_id=$deletedVideoId") -eq 0) `
             -Message "ASR segments remain after video deletion"
+        Assert-Condition -Condition ((Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_asr_chunk WHERE video_id=$deletedVideoId") -eq 0) `
+            -Message "ASR chunk state remains after video deletion"
         Assert-Condition -Condition ((Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_ocr_observation WHERE video_id=$deletedVideoId") -eq 0) `
             -Message "OCR observations remain after video deletion"
         Assert-Condition -Condition ((Invoke-MySqlScalar -Sql "SELECT COUNT(*) FROM video_timeline WHERE video_id=$deletedVideoId") -eq 0) `
@@ -586,7 +725,7 @@ try {
     }
 
     Write-Host "[PASS] Local multimodal knowledge E2E completed." -ForegroundColor Green
-    Write-Host "       ASR segments=$asrCount, OCR observations=$ocrCount, timeline rows=$timelineCount"
+    Write-Host "       ASR chunks=$asrChunkCount, segments=$asrCount, OCR observations=$ocrCount, timeline rows=$timelineCount"
     Write-Host "       Video references=$($videoReferences.Count), document references=$($documentReferences.Count)"
 } finally {
     if ($cacheStopped) {
