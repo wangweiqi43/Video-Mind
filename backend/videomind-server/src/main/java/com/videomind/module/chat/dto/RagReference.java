@@ -8,6 +8,10 @@ import lombok.Data;
 @Builder
 public class RagReference {
 
+    private String evidenceId;
+    private Long knowledgeBaseId;
+    private Long documentId;
+    private Long documentVersionId;
     private Long videoId;
     private Long taskId;
     private KnowledgeChunkType chunkType;

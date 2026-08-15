@@ -19,14 +19,14 @@ class StructuredWorkflowDecisionTest {
     void parsesStrictPlannerJsonAndRejectsUnknownTools() {
         var plan = planner.parse("""
                 ```json
-                {"route":"DEEP_RETRIEVAL","steps":[{"id":"s1","tool":"HYBRID_RETRIEVAL","input":"时间轴证据"}]}
+                {"route":"DEEP_RETRIEVAL","steps":[{"id":"s1","tool":"VIDEO_TIMELINE_RETRIEVAL","input":"时间轴证据"}]}
                 ```
                 """, 1, 6);
 
         assertThat(plan.generation()).isEqualTo(1);
         assertThat(plan.steps()).singleElement().satisfies(step -> {
             assertThat(step.id()).isEqualTo("s1");
-            assertThat(step.tool()).isEqualTo("HYBRID_RETRIEVAL");
+            assertThat(step.tool()).isEqualTo("VIDEO_TIMELINE_RETRIEVAL");
         });
         assertThatThrownBy(() -> planner.parse(
                 "{\"route\":\"x\",\"steps\":[{\"id\":\"s1\",\"tool\":\"WEB_SEARCH\",\"input\":\"q\"}]}",

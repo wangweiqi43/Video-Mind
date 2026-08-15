@@ -28,8 +28,9 @@ class PlannerExecutorCriticWorkflowTest {
     private final WorkflowClock clock = mock(WorkflowClock.class);
     private final PlannerExecutorCriticWorkflow workflow = new PlannerExecutorCriticWorkflow(
             planner, executor, critic, clock);
-    private final Request request = new Request(7L, List.of(11L), "解释事务消息", Mode.STANDARD);
-    private final Plan plan = new Plan("HYBRID_RAG", List.of(new Step("s1", "HYBRID_RETRIEVAL", "query")), 0);
+    private final Request request = new Request(7L, 51L, List.of(11L), "解释事务消息", Mode.STANDARD);
+    private final Plan plan = new Plan("HYBRID_RAG",
+            List.of(new Step("s1", "ALL_SCOPE_HYBRID_RETRIEVAL", "query")), 0);
 
     PlannerExecutorCriticWorkflowTest() {
         when(clock.now()).thenReturn(Instant.parse("2026-08-15T00:00:00Z"));
@@ -73,7 +74,7 @@ class PlannerExecutorCriticWorkflowTest {
         when(planner.plan(any(), any(), any(), any(Integer.class))).thenReturn(threeSteps);
         when(executor.execute(any(), any())).thenReturn(new StepResult("s1", List.of()));
 
-        var result = workflow.run(new Request(7L, List.of(11L), "q", Mode.STANDARD));
+        var result = workflow.run(new Request(7L, 51L, List.of(11L), "q", Mode.STANDARD));
 
         assertThat(result.status()).isEqualTo(Status.TOOL_BUDGET_EXCEEDED);
         verify(executor, times(2)).execute(any(), any());
@@ -88,7 +89,7 @@ class PlannerExecutorCriticWorkflowTest {
                 .thenReturn(new Critique(Verdict.REPLAN, "r1"), new Critique(Verdict.REPLAN, "r2"),
                         new Critique(Verdict.FAIL, "done"));
 
-        Request deep = new Request(7L, List.of(11L), "q", Mode.DEEP);
+        Request deep = new Request(7L, 51L, List.of(11L), "q", Mode.DEEP);
         var result = workflow.run(deep);
 
         assertThat(deep.maxToolCalls()).isEqualTo(6);

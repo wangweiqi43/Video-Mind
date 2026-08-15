@@ -92,7 +92,11 @@ class ChatServiceLocalWorkflowTest {
 
         assertThat(response.getAnswer()).isEqualTo("使用状态机和 CAS Lease");
         assertThat(response.getReferences()).singleElement().satisfies(reference -> {
-            assertThat(reference.getSourceType()).isEqualTo("KNOWLEDGE_BASE");
+            assertThat(reference.getSourceType()).isEqualTo("USER_DOCUMENT");
+            assertThat(reference.getEvidenceId()).isEqualTo("ev-1");
+            assertThat(reference.getKnowledgeBaseId()).isEqualTo(20L);
+            assertThat(reference.getDocumentId()).isEqualTo(30L);
+            assertThat(reference.getDocumentVersionId()).isEqualTo(40L);
             assertThat(reference.getStartSeconds()).isEqualTo(1);
         });
         ArgumentCaptor<AgentWorkflowModels.Request> workflowRequest =

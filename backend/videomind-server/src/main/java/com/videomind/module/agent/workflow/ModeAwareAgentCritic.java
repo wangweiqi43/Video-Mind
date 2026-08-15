@@ -24,8 +24,9 @@ public class ModeAwareAgentCritic implements AgentCritic {
 
     @Override
     public Critique review(Request request, Plan plan, List<StepResult> results, int replans) {
-        if (request.mode() != Mode.DEEP) {
-            return evidenceCritic.review(request, plan, results, replans);
+        Critique safety = evidenceCritic.review(request, plan, results, replans);
+        if (request.mode() != Mode.DEEP || safety.verdict() != AgentWorkflowModels.Verdict.ACCEPT) {
+            return safety;
         }
         try {
             return decisions.run(() -> structured.review(request, plan, results, replans), decisionTimeout());

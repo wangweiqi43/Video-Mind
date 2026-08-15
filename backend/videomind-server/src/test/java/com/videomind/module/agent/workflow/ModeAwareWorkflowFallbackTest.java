@@ -26,7 +26,7 @@ class ModeAwareWorkflowFallbackTest {
     private final AgentWorkflowProperties properties = new AgentWorkflowProperties();
     private final WorkflowDecisionRunner decisions = new WorkflowDecisionRunner();
     private final Plan fallback = new Plan("RULE", List.of(
-            new Step("s1", "HYBRID_RETRIEVAL", "q")), 0);
+            new Step("s1", "ALL_SCOPE_HYBRID_RETRIEVAL", "q")), 0);
 
     @Test
     void standardModeNeverCallsLlmPlanner() {
@@ -70,13 +70,14 @@ class ModeAwareWorkflowFallbackTest {
         Critique fallbackCritique = new Critique(Verdict.REPLAN, "rule");
         when(structuredCritic.review(request, fallback, List.of(), 0))
                 .thenThrow(new IllegalArgumentException("invalid json"));
-        when(evidence.review(request, fallback, List.of(), 0)).thenReturn(fallbackCritique);
+        when(evidence.review(request, fallback, List.of(), 0))
+                .thenReturn(new Critique(Verdict.ACCEPT, "safe"), fallbackCritique);
         ModeAwareAgentCritic critic = new ModeAwareAgentCritic(evidence, structuredCritic, properties, decisions);
 
         assertThat(critic.review(request, fallback, List.of(), 0)).isSameAs(fallbackCritique);
     }
 
     private Request request(Mode mode) {
-        return new Request(7L, List.of(11L), "q", mode);
+        return new Request(7L, 51L, List.of(11L), "q", mode);
     }
 }

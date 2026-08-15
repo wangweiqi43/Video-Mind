@@ -7,7 +7,8 @@ public final class AgentWorkflowModels {
     private AgentWorkflowModels() {
     }
 
-    public record Request(Long userId, List<Long> knowledgeBaseIds, String question, Mode mode) {
+    public record Request(Long userId, Long conversationId, List<Long> knowledgeBaseIds,
+                          String question, Mode mode) {
         public Request {
             knowledgeBaseIds = knowledgeBaseIds == null ? List.of() : List.copyOf(knowledgeBaseIds);
             mode = mode == null ? Mode.STANDARD : mode;
@@ -40,9 +41,13 @@ public final class AgentWorkflowModels {
     public record Step(String id, String tool, String input) {
     }
 
-    public record StepResult(String stepId, List<Evidence> evidence) {
+    public record StepResult(String stepId, String tool, List<Evidence> evidence, String observation) {
         public StepResult {
             evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+
+        public StepResult(String stepId, List<Evidence> evidence) {
+            this(stepId, null, evidence, null);
         }
     }
 

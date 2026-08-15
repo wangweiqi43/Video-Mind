@@ -155,14 +155,20 @@ public class ChatServiceImpl implements ChatService {
     private List<RagReference> retrieve(ChatMessageRequest request, Long userId, ChatSession session) {
         List<Long> scope = sessionScope(session, userId);
         boolean deep = Boolean.TRUE.equals(request.getDeepThinkingEnabled());
-        AgentWorkflowModels.Result result = workflow.run(new AgentWorkflowModels.Request(userId, scope,
+        AgentWorkflowModels.Result result = workflow.run(new AgentWorkflowModels.Request(userId, session.getId(), scope,
                 request.getQuestion(), deep ? AgentWorkflowModels.Mode.DEEP : AgentWorkflowModels.Mode.STANDARD));
-        return result.evidence().stream().map(evidence -> reference(evidence, session.getVideoId())).toList();
+        Long videoKnowledgeBaseId = scope.isEmpty() ? null : scope.get(0);
+        return result.evidence().stream()
+                .map(evidence -> reference(evidence, session.getVideoId(), videoKnowledgeBaseId)).toList();
     }
 
-    private RagReference reference(Evidence value, Long videoId) {
-        return RagReference.builder().videoId(videoId).chunkIndex(value.chunkIndex()).chunkText(value.content())
-                .score(value.finalScore()).sourceType("KNOWLEDGE_BASE").title(value.title())
+    private RagReference reference(Evidence value, Long videoId, Long videoKnowledgeBaseId) {
+        String sourceType = java.util.Objects.equals(videoKnowledgeBaseId, value.knowledgeBaseId())
+                ? "VIDEO_TIMELINE" : "USER_DOCUMENT";
+        return RagReference.builder().evidenceId(value.evidenceId()).knowledgeBaseId(value.knowledgeBaseId())
+                .documentId(value.documentId()).documentVersionId(value.documentVersionId())
+                .videoId(videoId).chunkIndex(value.chunkIndex()).chunkText(value.content())
+                .score(value.finalScore()).sourceType(sourceType).title(value.title())
                 .startSeconds(value.startMs() == null ? null : Math.toIntExact(value.startMs() / 1_000))
                 .endSeconds(value.endMs() == null ? null : Math.toIntExact(value.endMs() / 1_000)).build();
     }

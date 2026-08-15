@@ -14,6 +14,6 @@ public class RuleBasedAgentPlanner implements AgentPlanner {
         String query = generation == 0 ? request.question()
                 : request.question() + "；补充检索视频时间轴、上传文档与上下文中的相关证据";
         return new Plan(generation == 0 ? "HYBRID_RAG" : "HYBRID_RAG_EXPANDED",
-                List.of(new Step("retrieve-" + generation, "HYBRID_RETRIEVAL", query)), generation);
+                List.of(new Step("retrieve-" + generation, "ALL_SCOPE_HYBRID_RETRIEVAL", query)), generation);
     }
 }
