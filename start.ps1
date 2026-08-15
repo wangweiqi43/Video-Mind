@@ -277,17 +277,18 @@ if (-not (Test-DockerReady)) {
 }
 
 try {
+    $physicalMemoryBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
     $physicalMemoryGiB = [math]::Round(
-        (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB,
+        $physicalMemoryBytes / 1GB,
         1
     )
-    if ($physicalMemoryGiB -lt 16) {
-        Write-Warning "Only $physicalMemoryGiB GiB physical memory was detected. MinerU pipeline CPU mode requires at least 16 GiB for real E2E; ops\e2e-local.ps1 will refuse the real run."
+    if ($physicalMemoryBytes -lt 16000000000) {
+        Write-Warning "Only $physicalMemoryGiB GiB physical memory was detected. MinerU pipeline CPU mode requires a 16 GB-class machine for real E2E; ops\e2e-local.ps1 will refuse the real run."
     } else {
-        Write-Host "[OK] Physical memory: $physicalMemoryGiB GiB" -ForegroundColor Green
+        Write-Host "[OK] Physical memory: $physicalMemoryGiB GiB (16 GB-class)" -ForegroundColor Green
     }
 } catch {
-    Write-Warning "Physical memory could not be detected. Verify at least 16 GiB before running real MinerU E2E."
+    Write-Warning "Physical memory could not be detected. Verify a 16 GB-class machine before running real MinerU E2E."
 }
 
 $composeHelp = (& docker compose up --help 2>&1) -join "`n"

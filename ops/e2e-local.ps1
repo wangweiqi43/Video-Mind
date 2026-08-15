@@ -433,9 +433,9 @@ if ($null -eq $physicalMemoryBytes) {
 }
 $physicalMemoryGiB = [math]::Round($physicalMemoryBytes / 1GB, 1)
 if ($physicalMemoryBytes -lt 16000000000) {
-    throw "Real MinerU E2E requires at least 16 GiB physical memory; detected $physicalMemoryGiB GiB"
+    throw "Real MinerU E2E requires a 16 GB-class machine; detected $physicalMemoryGiB GiB"
 }
-Write-Host "[OK] Physical memory satisfies MinerU CPU requirement: $physicalMemoryGiB GiB"
+Write-Host "[OK] Physical memory satisfies MinerU CPU requirement: $physicalMemoryGiB GiB (16 GB-class)"
 
 $ffmpeg = Resolve-Executable -EnvironmentName "FFMPEG_BINARY_PATH" `
     -Candidates @((Join-Path $repoRoot "runtime\tools\ffmpeg-8.1.2-essentials_build\bin\ffmpeg.exe"),
