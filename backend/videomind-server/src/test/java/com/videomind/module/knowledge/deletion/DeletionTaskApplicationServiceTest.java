@@ -19,8 +19,6 @@ import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.mq.TaskDispatchResult;
 import com.videomind.module.task.mq.TransactionalTaskMessageProducer;
-import com.videomind.module.task.service.ProcessingTaskStateMachine;
-import com.videomind.module.task.service.TaskCheckpointService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
 import org.junit.jupiter.api.Test;
@@ -31,10 +29,8 @@ class DeletionTaskApplicationServiceTest {
     private final VideoFileService videos = mock(VideoFileService.class);
     private final TransactionalTaskMessageProducer messages = mock(TransactionalTaskMessageProducer.class);
     private final ProcessingTaskMapper processingTasks = mock(ProcessingTaskMapper.class);
-    private final ProcessingTaskStateMachine stateMachine = mock(ProcessingTaskStateMachine.class);
-    private final TaskCheckpointService checkpoints = mock(TaskCheckpointService.class);
     private final DeletionTaskApplicationService service = new DeletionTaskApplicationService(
-            knowledgeBases, videos, messages, processingTasks, stateMachine, checkpoints);
+            knowledgeBases, videos, messages, processingTasks);
 
     @Test
     void dispatchesOwnedUserKnowledgeBaseAsTransactionalDeleteTask() {
@@ -94,33 +90,6 @@ class DeletionTaskApplicationServiceTest {
         ArgumentCaptor<TaskCreateCommand> command = ArgumentCaptor.forClass(TaskCreateCommand.class);
         verify(messages).dispatch(command.capture());
         assertThat(command.getValue().taskType()).isEqualTo(ProcessingTaskType.VIDEO_DELETE);
-    }
-
-    @Test
-    void refusesCancellationAfterDestructiveCheckpoint() {
-        when(processingTasks.selectById(99L)).thenReturn(task(ProcessingTaskType.KNOWLEDGE_DELETE,
-                ProcessingTaskState.PROCESSING));
-        when(checkpoints.isCompleted(99L, PhysicalDeletionCoordinator.DELETION_STARTED)).thenReturn(true);
-
-        assertThatThrownBy(() -> service.cancelIfDeletionTask(7L, 99L))
-                .isInstanceOfSatisfying(BizException.class,
-                        failure -> assertThat(failure.getCode()).isEqualTo(409));
-        verify(stateMachine, never()).requestCancel(any(), any());
-    }
-
-    @Test
-    void cancellationBeforeDestructiveCheckpointIsIdempotent() {
-        ProcessingTask pending = task(ProcessingTaskType.VIDEO_DELETE, ProcessingTaskState.PENDING);
-        ProcessingTask cancelled = task(ProcessingTaskType.VIDEO_DELETE, ProcessingTaskState.CANCELLED);
-        when(processingTasks.selectById(99L)).thenReturn(pending, cancelled);
-        when(stateMachine.requestCancel(99L, 7L)).thenReturn(
-                new ProcessingTaskStateMachine.CancelRequestResult(
-                        ProcessingTaskStateMachine.CancelRequestStatus.CANCELLED, 1));
-
-        var result = service.cancelIfDeletionTask(7L, 99L).orElseThrow();
-
-        assertThat(result.status()).isEqualTo("CANCELLED");
-        verify(stateMachine).requestCancel(99L, 7L);
     }
 
     private ProcessingTask task(ProcessingTaskType type, ProcessingTaskState state) {

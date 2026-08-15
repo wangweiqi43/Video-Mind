@@ -25,8 +25,6 @@ import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.mq.TaskDispatchResult;
 import com.videomind.module.task.mq.TransactionalTaskMessageProducer;
 import com.videomind.module.task.service.TaskRecordService;
-import com.videomind.module.task.service.ProcessingTaskStateMachine;
-import com.videomind.module.task.service.TaskRecordProjectionService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
 import java.nio.charset.StandardCharsets;
@@ -50,8 +48,6 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
     private final AiProperties aiProperties;
     private final TencentAsrProperties tencentAsrProperties;
     private final ProcessingTaskMapper processingTasks;
-    private final ProcessingTaskStateMachine processingState;
-    private final TaskRecordProjectionService taskProjection;
     private final VideoKnowledgeReusePolicy videoKnowledgeReusePolicy;
 
     @Override
@@ -184,33 +180,6 @@ public class TaskRecordServiceImpl extends ServiceImpl<TaskRecordMapper, TaskRec
             throw new BizException(404, "任务不存在或无权访问");
         }
         return taskRecord;
-    }
-
-    @Override
-    public TaskRecord cancelTask(Long taskId, Long userId) {
-        TaskRecord task = getTask(taskId, userId);
-        if (task.getTaskStatus() == TaskStatus.SUCCESS || task.getTaskStatus() == TaskStatus.FAILED
-                || task.getTaskStatus() == TaskStatus.CANCELLED) {
-            return task;
-        }
-        ProcessingTask processing = processingTasks.selectOne(new LambdaQueryWrapper<ProcessingTask>()
-                .eq(ProcessingTask::getTaskType, ProcessingTaskType.VIDEO_ANALYSIS)
-                .eq(ProcessingTask::getBusinessId, taskId)
-                .orderByDesc(ProcessingTask::getCreatedTime)
-                .last("LIMIT 1"));
-        if (processing == null) {
-            throw new BizException(409, "任务缺少可取消的本地处理状态");
-        }
-        var result = processingState.requestCancel(processing.getId(), userId);
-        if (result.status() == ProcessingTaskStateMachine.CancelRequestStatus.NOT_FOUND
-                || result.status() == ProcessingTaskStateMachine.CancelRequestStatus.FORBIDDEN) {
-            throw new BizException(404, "任务不存在或无权访问");
-        }
-        if (result.status() == ProcessingTaskStateMachine.CancelRequestStatus.CONFLICT) {
-            throw new BizException(409, "任务状态正在变化，请重试取消");
-        }
-        taskProjection.project(processing.getId());
-        return getTask(taskId, userId);
     }
 
     @Override

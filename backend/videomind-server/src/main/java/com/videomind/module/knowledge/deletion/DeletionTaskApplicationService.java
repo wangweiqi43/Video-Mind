@@ -12,8 +12,6 @@ import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.mq.TaskCreateCommand;
 import com.videomind.module.task.mq.TaskDispatchResult;
 import com.videomind.module.task.mq.TransactionalTaskMessageProducer;
-import com.videomind.module.task.service.ProcessingTaskStateMachine;
-import com.videomind.module.task.service.TaskCheckpointService;
 import com.videomind.module.video.service.VideoFileService;
 import java.util.Map;
 import java.util.Optional;
@@ -27,8 +25,6 @@ public class DeletionTaskApplicationService {
     private final VideoFileService videos;
     private final TransactionalTaskMessageProducer messages;
     private final ProcessingTaskMapper processingTasks;
-    private final ProcessingTaskStateMachine stateMachine;
-    private final TaskCheckpointService checkpoints;
 
     public DeletionTaskResponse deleteKnowledgeBase(Long userId, Long knowledgeBaseId) {
         KnowledgeBase value = knowledgeBases.selectOne(Wrappers.<KnowledgeBase>lambdaQuery()
@@ -47,31 +43,6 @@ public class DeletionTaskApplicationService {
     public DeletionTaskResponse deleteVideo(Long userId, Long videoId) {
         videos.getVideoDetail(videoId, userId);
         return dispatch(userId, ProcessingTaskType.VIDEO_DELETE, videoId);
-    }
-
-    public Optional<DeletionTaskResponse> cancelIfDeletionTask(Long userId, Long taskId) {
-        ProcessingTask task = deletionTask(taskId);
-        if (task == null) {
-            return Optional.empty();
-        }
-        if (!userId.equals(task.getUserId())) {
-            throw new BizException(404, "任务不存在或无权访问");
-        }
-        if (checkpoints.isCompleted(taskId, PhysicalDeletionCoordinator.DELETION_STARTED)) {
-            throw new BizException(409, "物理删除已经开始，不能取消");
-        }
-        ProcessingTaskStateMachine.CancelRequestResult result = stateMachine.requestCancel(taskId, userId);
-        if (result.status() == ProcessingTaskStateMachine.CancelRequestStatus.NOT_FOUND
-                || result.status() == ProcessingTaskStateMachine.CancelRequestStatus.FORBIDDEN) {
-            throw new BizException(404, "任务不存在或无权访问");
-        }
-        if (result.status() == ProcessingTaskStateMachine.CancelRequestStatus.CONFLICT) {
-            throw new BizException(409, "任务状态正在变化，请重试取消");
-        }
-        ProcessingTask refreshed = processingTasks.selectById(taskId);
-        String status = refreshed == null || refreshed.getState() == null
-                ? result.status().name() : refreshed.getState().name();
-        return Optional.of(new DeletionTaskResponse(task.getEventId(), taskId, status));
     }
 
     public Optional<DeletionTaskResponse> findDeletionTask(Long userId, Long taskId) {
