@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
 
 class LegacySchemaMigrationTest {
 
-    private static final String FRESH_DB = "videomind_migration_v17_fresh";
-    private static final String UPGRADE_DB = "videomind_migration_v17_upgrade";
+    private static final String FRESH_DB = "videomind_migration_v18_fresh";
+    private static final String UPGRADE_DB = "videomind_migration_v18_upgrade";
     private static String host;
     private static String port;
     private static String username;
@@ -46,6 +46,7 @@ class LegacySchemaMigrationTest {
 
         assertLegacySchemaRemoved(FRESH_DB);
         assertLocalSchemaRetained(FRESH_DB);
+        assertAsrChunkSchema(FRESH_DB);
     }
 
     @Test
@@ -73,6 +74,7 @@ class LegacySchemaMigrationTest {
 
         assertLegacySchemaRemoved(UPGRADE_DB);
         assertLocalSchemaRetained(UPGRADE_DB);
+        assertAsrChunkSchema(UPGRADE_DB);
         try (Connection connection = connect(UPGRADE_DB); Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("SELECT transcript_version,summary_status,"
                      + "summary_version,latest_summary_id FROM video_file WHERE id=1")) {
@@ -104,6 +106,33 @@ class LegacySchemaMigrationTest {
             assertThat(count(statement, "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() "
                     + "AND TABLE_NAME IN ('app_user','user_refresh_token','agent_execution','agent_step')"))
                     .isEqualTo(4);
+        }
+    }
+
+    private static void assertAsrChunkSchema(String database) throws Exception {
+        try (Connection connection = connect(database); Statement statement = connection.createStatement()) {
+            assertThat(count(statement, "SELECT COUNT(*) FROM information_schema.TABLES "
+                    + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='video_asr_chunk'"))
+                    .isEqualTo(1);
+            statement.executeUpdate("INSERT INTO video_asr_chunk "
+                    + "(processing_task_id,task_record_id,video_id,user_id,chunk_index,"
+                    + "extraction_start_ms,extraction_end_ms,logical_start_ms,logical_end_ms,"
+                    + "engine_signature,state,submit_attempt) VALUES "
+                    + "(99,88,77,66,0,0,121000,0,120000,REPEAT('a',64),'PLANNED',0) "
+                    + "ON DUPLICATE KEY UPDATE state=VALUES(state)");
+            statement.executeUpdate("INSERT INTO video_asr_chunk "
+                    + "(processing_task_id,task_record_id,video_id,user_id,chunk_index,"
+                    + "extraction_start_ms,extraction_end_ms,logical_start_ms,logical_end_ms,"
+                    + "engine_signature,state,submit_attempt) VALUES "
+                    + "(99,88,77,66,0,0,121000,0,120000,REPEAT('a',64),'SUCCEEDED',1) "
+                    + "ON DUPLICATE KEY UPDATE state=VALUES(state),submit_attempt=VALUES(submit_attempt)");
+            assertThat(count(statement, "SELECT COUNT(*) FROM video_asr_chunk "
+                    + "WHERE processing_task_id=99 AND chunk_index=0"))
+                    .isEqualTo(1);
+            assertThat(count(statement, "SELECT COUNT(*) FROM video_asr_chunk "
+                    + "WHERE processing_task_id=99 AND chunk_index=0 AND state='SUCCEEDED' "
+                    + "AND submit_attempt=1"))
+                    .isEqualTo(1);
         }
     }
 
