@@ -69,11 +69,4 @@ public class TaskController {
                 MockUserContext.currentUserId()));
     }
 
-    @PostMapping("/{taskId}/cancel")
-    public ApiResponse<?> cancel(@PathVariable Long taskId) {
-        Long userId = MockUserContext.currentUserId();
-        return deletionTasks.cancelIfDeletionTask(userId, taskId)
-                .<ApiResponse<?>>map(ApiResponse::success)
-                .orElseGet(() -> ApiResponse.success(taskRecordService.cancelTask(taskId, userId)));
-    }
 }
