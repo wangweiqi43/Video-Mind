@@ -137,7 +137,6 @@ AUDIO_EXTRACTED
 PENDING → PROCESSING → SUCCESS
                     ↘ RETRY_WAIT → PROCESSING
                     ↘ FAILED / DEAD
-                    ↘ CANCEL_REQUESTED → CANCELLED
 ```
 
 任务幂等分为三层：
@@ -146,7 +145,8 @@ PENDING → PROCESSING → SUCCESS
 2. Inbox 记录避免同一 RocketMQ 事件重复消费。
 3. CAS Lease 与 Checkpoint 保证崩溃恢复时只续跑未完成阶段。
 
-取消是协作式的：处理器会在阶段边界、ASR 轮询和逐帧 OCR 时检查取消状态。已进入破坏性删除阶段的任务不可取消。
+当前不提供视频分析任务或物理删除任务的取消接口。状态机仍识别历史
+`CANCEL_REQUESTED/CANCELLED` 记录，确保升级前已投递消息可以安全收口。
 
 ### 腾讯云 ASR 输入
 
@@ -206,11 +206,16 @@ TENCENT_ASR_PROVIDER_TASK_TTL_HOURS=24
 
 Critic 检查子问题覆盖、证据存在、引用完整性和明显冲突，只允许 Query Rewrite 或有界 Replan。`chat_generation`、`agent_execution` 和 `agent_step` 保存计划版本、工具、耗时、状态及 Evidence ID，不保存隐藏思维链。
 
-流式接口保留 `delta/done/error` 事件，并增加：
+流式接口保留 `delta/done/error` 事件，并增加 `generation/workflow/cancelled`：
 
 ```json
 {"event":"workflow","phase":"...","stepId":"...","status":"...","message":"..."}
 ```
+
+客户端收到首个 `generation` 事件后取得 `generationId`，可调用
+`POST /api/chat/generations/{generationId}/cancel` 停止当前回答。后端会在工作流边界、
+Planner/Critic 等待和模型流读取期间检查取消，并主动关闭上游模型响应流；已生成的部分文本仅进入审计，
+不会写成完整助手消息。
 
 ## 主要 API
 
@@ -223,13 +228,13 @@ Critic 检查子问题覆盖、证据存在、引用完整性和明显冲突，�
 | POST | `/api/tasks/analyze` | 事务投递视频分析 |
 | GET | `/api/tasks/{taskId}` | 查询任务状态 |
 | GET | `/api/tasks/{taskId}/result` | 查询分析结果 |
-| POST | `/api/tasks/{taskId}/cancel` | 协作式取消 |
 | POST | `/api/knowledge-bases` | 创建用户知识库 |
 | POST | `/api/knowledge-bases/{id}/documents` | 上传文档并启动 MinerU 解析 |
 | DELETE | `/api/knowledge-bases/{id}` | 返回 HTTP 202 的异步物理删除任务 |
 | POST | `/api/chat/session` | 创建固定知识库范围会话 |
 | POST | `/api/chat/message` | 非流式问答 |
 | POST/GET | `/api/chat/message/stream` | SSE 流式问答与 workflow 事件 |
+| POST | `/api/chat/generations/{generationId}/cancel` | 停止当前模型回答 |
 | DELETE | `/api/videos/{videoId}` | 返回 HTTP 202 的异步物理删除任务 |
 
 ## 测试与真实验收

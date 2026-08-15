@@ -1,20 +1,20 @@
-# VideoMind API 接口文档
+# VideoMind 后端 API
 
-## 1. 文档说明
+本文档以当前后端 Controller 与 DTO 为准。服务默认地址为 `http://localhost:8080`，业务接口前缀为 `/api`。
 
-本文档描述 VideoMind 后端 REST API 的调用方式、请求参数、响应结构和典型业务流程。
+## 1. 公共约定
 
-- 后端服务地址：`http://localhost:8080`
-- API Base URL：`http://localhost:8080/api`
-- 前端开发代理：Vite 将 `/api` 代理到 `http://localhost:8080`
-- 当前用户上下文：项目尚未接入真实登录鉴权，后端统一使用 Mock 用户 `userId=1`
-- 时间格式：`yyyy-MM-dd'T'HH:mm:ss`，例如 `2026-05-31T23:08:19`
+### 1.1 鉴权
 
-## 2. 通用约定
+除 `/api/auth/**` 和 `/actuator/health/**` 外，所有接口都需要登录。登录或注册成功后，服务同时返回访问令牌并写入 HttpOnly Cookie：
 
-### 2.1 统一响应结构
+- `VM_ACCESS`：访问令牌；
+- `VM_REFRESH`：刷新令牌；
+- 非浏览器客户端也可发送 `Authorization: Bearer <accessToken>`。
 
-除 SSE 流式接口外，所有接口均返回统一 JSON 结构：
+### 1.2 普通响应
+
+除文件流和 SSE 外，响应统一包装为：
 
 ```json
 {
@@ -24,723 +24,354 @@
 }
 ```
 
-字段说明：
+`code=0` 表示成功。常见业务错误码为 `400`（参数或文件错误）、`404`（不存在或无权访问）、`409`（状态冲突）、`429`（限流）、`500`（内部或外部依赖失败）、`503`（检索召回均不可用）。业务异常由响应体 `code` 表示；异步删除成功使用 HTTP 202。
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| code | integer | 是 | 业务状态码。`0` 表示成功，非 `0` 表示失败 |
-| message | string | 是 | 响应消息或错误原因 |
-| data | object/array/null | 否 | 业务数据 |
+### 1.3 关键状态
 
-失败响应示例：
+- 视频业务任务：`PENDING / PROCESSING / RETRYING / SUCCESS / FAILED`。历史数据可能出现 `CANCEL_REQUESTED / CANCELLED`，当前不再提供视频任务取消入口。
+- 处理任务：`PENDING / PROCESSING / RETRY_WAIT / SUCCESS / FAILED / DEAD`，历史取消状态同上。
+- 知识库：`EMPTY / UPLOADING / PROCESSING / READY / FAILED / DELETING`。
+- 知识库类型：`VIDEO / USER`。
+- 回答生成：`RUNNING / CANCEL_REQUESTED / CANCELLED / SUCCESS / FAILED`。
+
+## 2. 认证
+
+### `POST /api/auth/register`
+
+注册并登录。
+
+```json
+{"username":"demo","password":"password123"}
+```
+
+用户名不能为空，密码长度为 8–128。响应 `data`：
 
 ```json
 {
-  "code": 400,
-  "message": "上传文件不能为空",
-  "data": null
+  "accessToken":"...",
+  "expiresIn":900,
+  "subject":"用户公开 ID",
+  "username":"demo"
 }
 ```
 
-### 2.2 常见错误码
+### `POST /api/auth/login`
 
-| code | 说明 |
-|---:|---|
-| 0 | 请求成功 |
-| 400 | 请求参数错误、状态不允许、文件校验失败 |
-| 404 | 资源不存在或无权访问 |
-| 409 | 资源冲突，例如视频重复上传 |
-| 429 | 请求过于频繁或同一资源正在处理中 |
-| 500 | 服务端异常、第三方服务异常、中间件异常 |
+请求与响应同注册。
 
-### 2.3 常用枚举
+### `POST /api/auth/refresh`
 
-| 枚举 | 可选值 | 说明 |
-|---|---|---|
-| UploadStatus | `UPLOADING`, `UPLOADED`, `FAILED` | 视频文件上传状态 |
-| UploadSessionStatus | `UPLOADING`, `COMPLETED`, `FAILED` | 分片上传会话状态 |
-| TaskStatus | `PENDING`, `PROCESSING`, `SUCCESS`, `FAILED` | 视频解析任务状态 |
-| KnowledgeChunkType | `TRANSCRIPTION`, `SUMMARY` | 知识库片段类型 |
-| MessageRole | `USER`, `ASSISTANT`, `SYSTEM` | 聊天消息角色 |
+读取 `VM_REFRESH` Cookie，刷新令牌并重写访问/刷新 Cookie。
 
-## 3. 视频模块
+### `POST /api/auth/logout`
 
-### 3.1 上传视频
+撤销刷新令牌并清空两个 Cookie。
 
-- Method：`POST`
-- Path：`/api/videos/upload`
-- Content-Type：`multipart/form-data`
-- 说明：上传单个视频文件。后端会计算 MD5，检查重复文件，写入 MinIO，并在 MySQL 保存视频元数据。
+### `GET /api/auth/me`
 
-请求参数：
+返回当前用户的 `subject` 与 `username`。
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|---|---|---|---:|---|
-| file | File | form-data | 是 | 视频文件。支持 `mp4`, `mov`, `avi`, `mkv`, `webm`, `flv`, `wmv`, `m4v` |
+## 3. 视频
 
-响应 `data`：
+### `POST /api/videos/upload`
+
+`multipart/form-data`，字段 `file`。上传视频到 MinIO，并保存视频元数据。`data` 主要字段：
 
 | 字段 | 类型 | 说明 |
-|---|---|---|
-| videoId | number | 视频 ID |
+| --- | --- | --- |
+| videoId | long | 视频 ID |
 | filename | string | 原始文件名 |
-| fileMd5 | string | 文件 MD5 |
-| fileSize | number | 文件大小，单位 byte |
-| bucket | string | MinIO bucket |
-| objectKey | string | MinIO object key |
-| implemented | boolean | 当前功能是否已实现 |
-| message | string | 提示信息 |
+| fileMd5 | string | 服务端 MD5 |
+| fileSize | long | 字节数 |
+| bucket / objectKey | string | MinIO 位置 |
+| duplicate | boolean | 是否复用已有视频 |
+| serverMd5CostMs / serverStorageCostMs / serverTotalCostMs | long | 服务端耗时 |
 
-示例：
+### `GET /api/videos/check-md5?fileMd5={md5}`
 
-```bash
-curl -F "file=@demo.mp4" http://localhost:8080/api/videos/upload
-```
+检查当前用户是否已上传相同 MD5，返回 `exists、videoId、filename、fileMd5、message`。
 
-### 3.2 检查视频 MD5
+### `POST /api/videos/multipart/init`
 
-- Method：`GET`
-- Path：`/api/videos/check-md5`
-- 说明：上传前检查当前用户下是否已存在相同 MD5 的视频。
-
-请求参数：
-
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|---|---|---|---:|---|
-| fileMd5 | string | query | 是 | 文件 MD5 |
-
-响应 `data`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| exists | boolean | 是否已存在 |
-| videoId | number/null | 已存在的视频 ID |
-| filename | string/null | 已存在的视频文件名 |
-| fileMd5 | string | 请求传入的 MD5 |
-| message | string | 提示信息 |
-
-示例：
-
-```bash
-curl "http://localhost:8080/api/videos/check-md5?fileMd5=ed0fe5bfcea9976c949fd293d7007afd"
-```
-
-### 3.3 查询视频列表
-
-- Method：`GET`
-- Path：`/api/videos/list`
-- 说明：查询当前用户已上传的视频列表，按创建时间倒序返回。
-
-响应 `data[]`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | number | 视频 ID |
-| userId | number | 用户 ID |
-| originalFilename | string | 原始文件名 |
-| fileMd5 | string | 文件 MD5 |
-| fileSize | number | 文件大小，单位 byte |
-| contentType | string | 文件 MIME 类型 |
-| minioBucket | string | MinIO bucket |
-| minioObjectKey | string | MinIO object key |
-| uploadStatus | string | 上传状态，见 `UploadStatus` |
-| durationSeconds | number/null | 视频时长，当前可能为空 |
-| createdTime | string | 创建时间 |
-| updatedTime | string | 更新时间 |
-| deleted | integer | 逻辑删除标记 |
-
-示例：
-
-```bash
-curl http://localhost:8080/api/videos/list
-```
-
-### 3.4 查询视频详情
-
-- Method：`GET`
-- Path：`/api/videos/{videoId}`
-- 说明：查询指定视频详情。
-
-路径参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| videoId | number | 是 | 视频 ID |
-
-响应 `data`：同“查询视频列表”的单个视频对象。
-
-示例：
-
-```bash
-curl http://localhost:8080/api/videos/12
-```
-
-### 3.5 查询视频最新转录文本
-
-- Method：`GET`
-- Path：`/api/videos/{videoId}/transcription`
-- 说明：按视频读取当前用户最新的共享 ASR 转录，不依赖普通或高级解析任务 ID，也不会触发新的 ASR、摘要或 Agent 请求。
-
-响应 `data`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| videoId | number | 视频 ID |
-| transcriptVersion | number | 当前转录版本 |
-| status | string | `READY` 或 `UNAVAILABLE` |
-| language | string/null | ASR 识别语言 |
-| transcriptionText | string/null | 最新转录正文 |
-| updatedTime | string/null | 转录更新时间 |
-
-尚无转录时仍返回 HTTP 200，`status=UNAVAILABLE` 且正文为空。
-
-### 3.6 删除视频
-
-- Method：`DELETE`
-- Path：`/api/videos/{videoId}`
-- 说明：删除指定视频，并清理关联任务、转录、摘要、知识库向量、分片上传会话和 MinIO 对象。
-
-路径参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| videoId | number | 是 | 视频 ID |
-
-响应 `data`：`null`
-
-示例：
-
-```bash
-curl -X DELETE http://localhost:8080/api/videos/12
-```
-
-## 4. 分片上传模块
-
-### 4.1 初始化分片上传
-
-- Method：`POST`
-- Path：`/api/videos/multipart/init`
-- Content-Type：`application/json`
-- 说明：创建或恢复分片上传会话。如果同一用户下存在相同 MD5 的上传中会话，则返回已有 `uploadId` 和已上传分片。
-
-请求体：
+初始化或恢复分片上传。
 
 ```json
 {
-  "filename": "demo.mp4",
-  "fileMd5": "ed0fe5bfcea9976c949fd293d7007afd",
-  "fileSize": 12842060,
-  "contentType": "video/mp4",
-  "totalParts": 3,
-  "chunkSize": 5242880
+  "filename":"demo.mp4",
+  "fileMd5":"完整文件 MD5",
+  "fileSize":12842060,
+  "contentType":"video/mp4",
+  "totalParts":3,
+  "chunkSize":5242880
 }
 ```
 
-请求字段：
+返回 `uploadId、uploadedParts、status、video`；命中已完成文件时 `video` 可直接返回视频信息。
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| filename | string | 是 | 原始文件名 |
-| fileMd5 | string | 是 | 完整文件 MD5 |
-| fileSize | number | 是 | 文件大小，单位 byte |
-| contentType | string | 否 | 文件 MIME 类型 |
-| totalParts | integer | 是 | 总分片数，最小值 `1` |
-| chunkSize | number | 是 | 单个分片大小，单位 byte |
+### `POST /api/videos/multipart/{uploadId}/chunk`
 
-响应 `data`：
+`multipart/form-data`：
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| uploadId | string | 分片上传会话 ID |
-| uploadedParts | integer[] | 已上传分片序号，从 `1` 开始 |
-| status | string | 分片上传会话状态，见 `UploadSessionStatus` |
+- query `partNumber`：从 1 开始；
+- query `chunkMd5`：本分片 MD5；
+- form `file`：分片内容。
 
-示例：
+返回 `uploadId、partNumber、uploaded、skipped、uploadedPartsCount、chunkMd5`。
 
-```bash
-curl -X POST http://localhost:8080/api/videos/multipart/init \
-  -H "Content-Type: application/json" \
-  -d "{\"filename\":\"demo.mp4\",\"fileMd5\":\"ed0fe5bfcea9976c949fd293d7007afd\",\"fileSize\":12842060,\"contentType\":\"video/mp4\",\"totalParts\":3,\"chunkSize\":5242880}"
-```
+### `GET /api/videos/multipart/{uploadId}/status`
 
-### 4.2 上传分片
+返回 `uploadId、totalParts、uploadedPartsCount、uploadedParts、status、videoId`。
 
-- Method：`POST`
-- Path：`/api/videos/multipart/{uploadId}/chunk`
-- Content-Type：`multipart/form-data`
-- 说明：上传指定序号的分片。分片序号从 `1` 开始。
+### `POST /api/videos/multipart/{uploadId}/complete`
 
-路径参数：
+合并分片、校验完整 MD5、写入 MinIO 和 MySQL，返回与普通上传相同的 `VideoUploadResponse`。
 
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| uploadId | string | 是 | 分片上传会话 ID |
+### `GET /api/videos/list`
 
-请求参数：
+返回当前用户的视频列表。
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|---|---|---|---:|---|
-| partNumber | integer | query | 是 | 分片序号，从 `1` 开始 |
-| file | File | form-data | 是 | 当前分片文件 |
+### `GET /api/videos/{videoId}`
 
-响应 `data`：
+返回视频详情，包括文件元数据、时长、`transcriptVersion、summaryStatus、summaryVersion` 等。
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| uploadId | string | 分片上传会话 ID |
-| partNumber | integer | 本次上传的分片序号 |
-| uploaded | boolean | 是否上传成功 |
-| uploadedPartsCount | integer | 当前已上传分片数量 |
+### `GET /api/videos/{videoId}/transcription`
 
-示例：
-
-```bash
-curl -F "file=@part-1.bin" "http://localhost:8080/api/videos/multipart/{uploadId}/chunk?partNumber=1"
-```
-
-### 4.3 查询分片上传状态
-
-- Method：`GET`
-- Path：`/api/videos/multipart/{uploadId}/status`
-- 说明：查询指定分片上传会话的进度。
-
-路径参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| uploadId | string | 是 | 分片上传会话 ID |
-
-响应 `data`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| uploadId | string | 分片上传会话 ID |
-| totalParts | integer | 总分片数 |
-| uploadedPartsCount | integer | 已上传分片数量 |
-| uploadedParts | integer[] | 已上传分片序号 |
-| status | string | 分片上传会话状态 |
-| videoId | number/null | 上传完成后生成的视频 ID |
-
-示例：
-
-```bash
-curl http://localhost:8080/api/videos/multipart/{uploadId}/status
-```
-
-### 4.4 完成分片上传
-
-- Method：`POST`
-- Path：`/api/videos/multipart/{uploadId}/complete`
-- 说明：合并所有分片，校验完整文件 MD5，上传到 MinIO，并写入视频元数据。
-
-路径参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| uploadId | string | 是 | 分片上传会话 ID |
-
-响应 `data`：同“上传视频”的 `VideoUploadResponse`。
-
-示例：
-
-```bash
-curl -X POST http://localhost:8080/api/videos/multipart/{uploadId}/complete
-```
-
-## 5. 视频解析任务模块
-
-### 5.1 创建解析任务
-
-- Method：`POST`
-- Path：`/api/tasks/analyze`
-- Content-Type：`application/json`
-- 说明：为指定视频创建模式隔离的异步解析任务。音频提取和 ASR 可跨模式复用；`NORMAL` 只生成 VideoMind 普通摘要，`ADVANCED` 只推进 MindAgent 高级摘要总结。
-
-请求体：
+读取最新共享转录：
 
 ```json
 {
-  "videoId": 12,
-  "autoVectorize": true,
-  "applicationMode": "NORMAL"
+  "videoId":12,
+  "transcriptVersion":3,
+  "status":"READY",
+  "language":"zh",
+  "transcriptionText":"...",
+  "updatedTime":"2026-08-15T12:00:00"
 }
 ```
 
-请求字段：
+尚无转录时仍成功返回，`status=UNAVAILABLE`。
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| videoId | number | 是 | 视频 ID |
-| autoVectorize | boolean | 否 | 解析成功后是否自动向量化入库，默认 `false` |
-| applicationMode | string | 否 | `NORMAL` 或 `ADVANCED`，默认 `NORMAL`；高级模式忽略 `autoVectorize` |
+### `GET /api/videos/{videoId}/stream`
 
-响应 `data`：
+直接流式读取视频对象，响应 Content-Type 为视频原 MIME 类型，不使用 `ApiResponse` 包装。
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| taskId | number | 解析任务 ID |
-| status | string | 任务状态，见 `TaskStatus` |
-| reused | boolean | 是否复用了已有任务或已有成功结果 |
-| applicationMode | string | 当前任务所属模式 |
+### `DELETE /api/videos/{videoId}`
 
-示例：
+返回 HTTP 202，创建可恢复的物理删除任务：
 
-```bash
-curl -X POST http://localhost:8080/api/tasks/analyze \
-  -H "Content-Type: application/json" \
-  -d "{\"videoId\":12,\"autoVectorize\":true}"
+```json
+{"code":0,"message":"success","data":{"eventId":"...","taskId":91,"status":"PENDING"}}
 ```
 
-### 5.2 查询任务详情
+删除任务会幂等清理 MinIO、Elasticsearch、MySQL 和相关缓存。当前不提供取消接口。
 
-- Method：`GET`
-- Path：`/api/tasks/{taskId}`
-- 说明：查询解析任务状态和元数据，前端可用该接口轮询任务进度。
+## 4. 视频分析任务
 
-路径参数：
+### `POST /api/tasks/analyze`
 
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| taskId | number | 是 | 解析任务 ID |
+事务投递视频分析任务。
 
-响应 `data`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | number | 任务 ID |
-| userId | number | 用户 ID |
-| videoId | number | 视频 ID |
-| videoMd5 | string | 视频 MD5 |
-| taskStatus | string | 任务状态 |
-| autoVectorize | boolean | 是否自动向量化 |
-| analysisMode | string | `NORMAL` 或 `ADVANCED` |
-| errorMessage | string/null | 失败原因 |
-| startedTime | string/null | 开始处理时间 |
-| finishedTime | string/null | 完成时间 |
-| createdTime | string | 创建时间 |
-| updatedTime | string | 更新时间 |
-| deleted | integer | 逻辑删除标记 |
-
-示例：
-
-```bash
-curl http://localhost:8080/api/tasks/26
+```json
+{"videoId":12}
 ```
 
-### 5.3 查询任务结果
+返回：
 
-- Method：`GET`
-- Path：`/api/tasks/{taskId}/result`
-- 说明：查询解析结果，包括 ASR 转录文本和摘要内容。
-
-路径参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| taskId | number | 是 | 解析任务 ID |
-
-响应 `data`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| taskId | number | 任务 ID |
-| videoId | number | 视频 ID |
-| status | string | 任务状态 |
-| transcriptionText | string/null | ASR 转录文本 |
-| summaryText | string/null | 摘要文本 |
-| summaryJson | string/null | 摘要 JSON 字符串 |
-
-示例：
-
-```bash
-curl http://localhost:8080/api/tasks/26/result
+```json
+{"code":0,"message":"success","data":{"taskId":26,"status":"PENDING","reused":false}}
 ```
 
-### 5.4 查询视频最近一次成功任务
+内部通过 RocketMQ 事务消息、Inbox、CAS Lease、Checkpoint 和唯一业务指纹保证幂等；ASR、OCR、时间轴、摘要和 ES 入库均在后台执行。
 
-- Method：`GET`
-- Path：`/api/tasks/video/{videoId}/latest-success`
-- 说明：查询指定视频在指定模式下最近一次成功任务；缺省查询普通模式，防止普通/高级摘要串用。
+### `GET /api/tasks/{taskId}`
 
-路径参数：
+视频分析任务返回 `TaskRecord`；知识库/视频删除任务返回 `DeletionTaskResponse`。两种结构都包含可轮询状态。
 
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| videoId | number | 是 | 视频 ID |
-| applicationMode | string | 否 | query 参数，`NORMAL` 或 `ADVANCED`，默认 `NORMAL` |
+### `GET /api/tasks/{taskId}/result`
 
-响应 `data`：同“查询任务详情”的任务对象；如果没有成功任务，可能返回 `null`。
+返回 `taskId、videoId、status、transcriptionText、summaryText、summaryJson`。未成功时正文可能为空。
 
-示例：
+### `GET /api/tasks/video/{videoId}/latest-success`
 
-```bash
-curl http://localhost:8080/api/tasks/video/12/latest-success
+返回当前用户该视频最近一次成功任务；不存在时 `data=null`。
+
+> 已删除：`POST /api/tasks/{taskId}/cancel`。该路径返回 404。
+
+## 5. 本地知识库
+
+### `POST /api/knowledge-bases`
+
+创建用户文档知识库。
+
+```json
+{"name":"项目资料"}
 ```
 
-## 6. 知识库模块
-
-### 6.1 向量化任务结果
-
-- Method：`POST`
-- Path：`/api/knowledge/vectorize/{taskId}`
-- 说明：将指定成功任务的转录和摘要切片，调用 Embedding 模型生成向量，并写入 Redis Stack / RediSearch。
-
-路径参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| taskId | number | 是 | 解析任务 ID |
-
-响应 `data`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| taskId | number | 任务 ID |
-| vectorized | boolean | 是否已完成向量化 |
-| status | string | 向量化状态，例如 `VECTORIZED`, `NOT_VECTORIZED`, `VECTORIZE_FAILED`, `VECTOR_INDEX_MISSING` |
-| message | string | 状态说明 |
-| chunkCount | integer/null | 知识片段数量 |
-| updatedTime | string/null | 状态更新时间 |
-
-示例：
-
-```bash
-curl -X POST http://localhost:8080/api/knowledge/vectorize/26
-```
-
-### 6.2 查询向量化状态
-
-- Method：`GET`
-- Path：`/api/knowledge/status/{taskId}`
-- 说明：查询指定任务是否已加入知识库。
-
-路径参数：
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| taskId | number | 是 | 解析任务 ID |
-
-响应 `data`：同“向量化任务结果”的 `KnowledgeStatusResponse`。
-
-示例：
-
-```bash
-curl http://localhost:8080/api/knowledge/status/26
-```
-
-## 7. 智能问答模块
-
-### 7.1 创建聊天会话
-
-- Method：`POST`
-- Path：`/api/chat/session`
-- 说明：创建一个新的聊天会话。
-
-响应 `data`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| sessionId | number | 会话 ID |
-| title | string | 会话标题，默认 `新会话` |
-
-示例：
-
-```bash
-curl -X POST http://localhost:8080/api/chat/session
-```
-
-### 7.2 查询聊天会话列表
-
-- Method：`GET`
-- Path：`/api/chat/session/list`
-- 说明：查询当前用户的聊天会话列表，按更新时间倒序返回。
-
-响应 `data[]`：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | number | 会话 ID |
-| userId | number | 用户 ID |
-| title | string | 会话标题 |
-| memorySummary | string/null | 长会话历史摘要记忆 |
-| createdTime | string | 创建时间 |
-| updatedTime | string | 更新时间 |
-| deleted | integer | 逻辑删除标记 |
-
-示例：
-
-```bash
-curl http://localhost:8080/api/chat/session/list
-```
-
-### 7.3 发送聊天消息
-
-- Method：`POST`
-- Path：`/api/chat/message`
-- Content-Type：`application/json`
-- 说明：发送非流式聊天消息。后端会生成问题 Embedding，检索当前视频知识片段，并调用 Chat 模型生成回答。
-
-请求体：
+名称非空且不超过 255 字符。返回：
 
 ```json
 {
-  "sessionId": 16,
-  "videoId": 12,
-  "question": "这个视频主要讲了什么？"
+  "id":31,
+  "type":"USER",
+  "videoId":null,
+  "name":"项目资料",
+  "status":"EMPTY",
+  "documentCount":0,
+  "createdTime":"...",
+  "updatedTime":"..."
 }
 ```
 
-请求字段：
+### `GET /api/knowledge-bases`
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| sessionId | number | 是 | 会话 ID |
-| videoId | number | 是 | 当前选中的视频 ID |
-| question | string | 是 | 用户问题 |
+列出当前用户的视频系统知识库和用户文档库。
 
-响应 `data`：
+### `GET /api/knowledge-bases/{knowledgeBaseId}`
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| messageId | number | 助手消息 ID |
-| answer | string | 助手回答 |
-| references | object[] | RAG 引用片段列表 |
-| referencesJson | string | 引用片段 JSON 字符串 |
-| createdTime | string | 助手消息创建时间 |
+查询知识库详情并校验归属。
 
-`references[]` 字段：
+### `POST /api/knowledge-bases/{knowledgeBaseId}/documents`
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| videoId | number | 引用所属视频 ID |
-| taskId | number | 引用所属任务 ID |
-| chunkType | string | 片段类型，见 `KnowledgeChunkType` |
-| chunkIndex | integer | 片段序号 |
-| chunkText | string | 片段文本 |
-| score | number | 相似度分数 |
+`multipart/form-data`，字段 `file`。原件写入 MinIO，随后事务投递 MinerU 本机解析和 ES 入库任务。返回：
 
-示例：
-
-```bash
-curl -X POST http://localhost:8080/api/chat/message \
-  -H "Content-Type: application/json" \
-  -d "{\"sessionId\":16,\"videoId\":12,\"question\":\"这个视频主要讲了什么？\"}"
+```json
+{
+  "documentId":41,
+  "versionId":42,
+  "title":"guide.pdf",
+  "sha256":"...",
+  "status":"PROCESSING",
+  "processingStage":"QUEUED",
+  "duplicated":false,
+  "eventId":"...",
+  "taskId":92,
+  "reusedTask":false
+}
 ```
 
-### 7.4 流式发送聊天消息
+### `DELETE /api/knowledge-bases/{knowledgeBaseId}`
 
-- Method：`GET`
-- Path：`/api/chat/message/stream`
-- Response Content-Type：`text/event-stream`
-- 说明：通过 SSE 流式返回助手回答。前端当前使用浏览器原生 `EventSource` 调用该接口。
+返回 HTTP 202 和 `DeletionTaskResponse`。只能独立删除 `USER` 知识库；视频系统库随视频删除。当前不提供删除任务取消接口。
 
-请求参数：
+> 已删除：旧 `/api/knowledge/vectorize/**` 与 `/api/knowledge/status/**`，均返回 404。知识入库已并入异步处理链路，向量存储为 Elasticsearch。
 
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|---|---|---|---:|---|
-| sessionId | number | query | 是 | 会话 ID |
-| videoId | number | query | 是 | 当前选中的视频 ID |
-| question | string | query | 是 | 用户问题 |
+## 6. 会话与问答
 
-SSE 事件：
+### `POST /api/chat/session`
 
-| 事件名 | data 类型 | 说明 |
-|---|---|---|
-| delta | string | 单次增量文本 |
-| done | object | 完整 `ChatMessageResponse`，表示回答完成 |
-| error | string | 错误信息 |
+创建固定知识库范围会话。
 
-示例：
-
-```js
-const params = new URLSearchParams({
-  sessionId: '16',
-  videoId: '12',
-  question: '这个视频主要讲了什么？'
-})
-
-const source = new EventSource(`/api/chat/message/stream?${params.toString()}`)
-source.addEventListener('delta', (event) => {
-  console.log(event.data)
-})
-source.addEventListener('done', (event) => {
-  console.log(JSON.parse(event.data))
-  source.close()
-})
-source.addEventListener('error', (event) => {
-  console.error(event.data)
-  source.close()
-})
+```json
+{"videoId":12,"knowledgeBaseIds":[31,32]}
 ```
 
-后端同时提供 `POST /api/chat/message/stream`，请求体与“发送聊天消息”一致，响应同样为 SSE。由于浏览器原生 `EventSource` 不支持 POST，前端当前默认使用 GET 版本。
+- `knowledgeBaseIds` 最多 20 个；只传用户文档库即可；
+- 后端自动把当前视频系统知识库放在范围第一项；
+- 用户文档库必须归当前用户且为 `READY`；
+- 创建后范围不可修改。
 
-### 7.5 查询会话消息
+返回 `sessionId、videoId、title、knowledgeBaseIds`，其中最后一个字段是包含视频系统库的最终固定范围。
 
-- Method：`GET`
-- Path：`/api/chat/session/{sessionId}/messages`
-- 说明：查询指定会话下的历史消息，按创建时间升序返回。
+### `GET /api/chat/session/list?videoId={videoId}`
 
-路径参数：
+返回该视频的会话列表：`id、videoId、title、lastMessagePreview、knowledgeBaseIds、createdTime、updatedTime`。
 
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---:|---|
-| sessionId | number | 是 | 会话 ID |
+### `GET /api/chat/session/{sessionId}/messages?videoId={videoId}`
 
-响应 `data[]`：
+返回会话历史消息，按时间升序排列。
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | number | 消息 ID |
-| sessionId | number | 会话 ID |
-| userId | number | 用户 ID |
-| role | string | 消息角色，见 `MessageRole` |
-| content | string | 消息内容 |
-| referencesJson | string/null | 助手消息引用片段 JSON |
-| createdTime | string | 创建时间 |
-| deleted | integer | 逻辑删除标记 |
+### `POST /api/chat/message`
 
-示例：
+非流式问答：
 
-```bash
-curl http://localhost:8080/api/chat/session/16/messages
+```json
+{
+  "sessionId":16,
+  "videoId":12,
+  "question":"结合视频和文档说明结论",
+  "answerScope":"KNOWLEDGE_EXTENDED",
+  "webSearchEnabled":false,
+  "deepThinkingEnabled":false
+}
 ```
 
-## 8. 典型业务流程
+- `answerScope`：`KNOWLEDGE_ONLY` 或 `KNOWLEDGE_EXTENDED`；
+- `deepThinkingEnabled=false` 使用普通有界工作流，`true` 使用深度 Planner/Critic；
+- `webSearchEnabled` 为兼容字段；当前 Executor 不提供联网搜索工具。
 
-### 8.1 普通上传到视频问答流程
+返回 `messageId、answer、references、referencesJson、createdTime`。
 
-1. 前端读取视频文件并计算 MD5。
-2. 调用 `GET /api/videos/check-md5` 检查是否重复上传。
-3. 若不存在，调用 `POST /api/videos/upload` 上传视频。
-4. 调用 `POST /api/tasks/analyze` 创建异步解析任务。
-5. 前端轮询 `GET /api/tasks/{taskId}`，直到任务状态为 `SUCCESS` 或 `FAILED`。
-6. 若任务成功，调用 `GET /api/tasks/{taskId}/result` 获取转录和摘要。
-7. 调用 `POST /api/knowledge/vectorize/{taskId}` 将解析结果加入知识库。
-8. 调用 `POST /api/chat/session` 创建聊天会话。
-9. 调用 `GET /api/chat/message/stream` 基于当前视频进行 RAG 流式问答。
+`references[]` 是可审计 Evidence，主要字段包括：
 
-### 8.2 分片上传流程
+- `evidenceId、knowledgeBaseId、documentId、documentVersionId`；
+- `chunkType、chunkIndex、chunkText、score、sourceType`；
+- 视频 Evidence 额外包含 `videoId、taskId、startSeconds、endSeconds`；
+- 外部来源兼容字段为 `title、domain、publishedAt、url`。
 
-1. 前端计算完整文件 MD5，并按固定大小切片。
-2. 调用 `POST /api/videos/multipart/init` 初始化分片上传会话。
-3. 根据返回的 `uploadedParts` 跳过已上传分片。
-4. 对未上传分片逐个调用 `POST /api/videos/multipart/{uploadId}/chunk?partNumber={n}`。
-5. 可调用 `GET /api/videos/multipart/{uploadId}/status` 查询上传进度。
-6. 所有分片上传后，调用 `POST /api/videos/multipart/{uploadId}/complete` 合并文件并写入视频元数据。
+### `POST /api/chat/message/stream`
 
-### 8.3 切换视频加载历史解析结果流程
+请求体与非流式接口相同，响应为 `text/event-stream`。
 
-1. 前端调用 `GET /api/videos/list` 获取视频列表。
-2. 用户选择某个视频。
-3. 前端调用 `GET /api/tasks/video/{videoId}/latest-success` 查询该视频最近一次成功任务。
-4. 如果存在成功任务，调用 `GET /api/tasks/{taskId}/result` 加载转录和摘要。
-5. 调用 `GET /api/knowledge/status/{taskId}` 加载知识库状态。
+### `GET /api/chat/message/stream`
 
-## 9. 接口安全与开发注意事项
+供原生 `EventSource` 使用。query 参数：
 
-- 当前项目使用 `MockUserContext` 固定用户 ID，生产环境应替换为 JWT、Session 或 OAuth2 鉴权。
-- 视频文件存储在 MinIO，数据库只保存元数据和对象存储 key。
-- 视频解析是耗时任务，调用 `POST /api/tasks/analyze` 后应通过轮询查询任务状态，不应阻塞等待解析完成。
-- 流式聊天 GET 接口会将 `question` 放入 URL query，生产环境建议改为 POST 流式读取或使用短期 token 避免敏感内容出现在日志中。
-- 当前知识库向量化依赖 Redis Stack / RediSearch；如果 RediSearch KNN 查询失败，后端会降级为 Redis hash 扫描检索，数据量增大后需要优化。
+- 必填：`sessionId、videoId、question`；
+- 可选：`answerScope`（默认 `KNOWLEDGE_EXTENDED`）、`webSearchEnabled`（默认 `false`）、`deepThinkingEnabled`（默认 `false`）。
+
+SSE 事件顺序与数据：
+
+| event | data | 说明 |
+| --- | --- | --- |
+| `generation` | `{"generationId":61,"status":"RUNNING"}` | 首个生成标识；客户端用它停止回答 |
+| `workflow` | `{"phase":"PLAN","stepId":"...","status":"STARTED","message":"..."}` | 可展示的工作流进度，不含隐藏思维链 |
+| `delta` | `{"delta":"增量文本"}` | 模型文本增量 |
+| `done` | `ChatMessageResponse` | 成功终态，随后连接完成 |
+| `cancelled` | `{"generationId":61,"status":"CANCELLED"}` | 取消终态，随后连接完成 |
+| `error` | JSON 字符串 | 失败终态，随后连接完成 |
+
+`workflow` 可能出现多次，`delta` 可能出现零到多次。终态事件只会是 `done / cancelled / error` 之一。
+
+### `POST /api/chat/generations/{generationId}/cancel`
+
+停止当前用户的一次回答生成。`generationId` 来自流式接口的 `generation` 事件。
+
+响应示例：
+
+```json
+{"code":0,"message":"success","data":{"generationId":61,"status":"CANCEL_REQUESTED"}}
+```
+
+语义：
+
+1. 只允许取消当前用户自己的生成，越权按 404 处理；
+2. `RUNNING` 通过 CAS 转为 `CANCEL_REQUESTED`，后端通知当前工作流并关闭模型响应流；
+3. 流式任务收口为 `CANCELLED`，已接收部分文本仅保存到审计表，不写入助手消息，也不计入已完成会话轮次；
+4. 重复取消是幂等的；若已 `SUCCESS / FAILED / CANCELLED`，直接返回当前终态；
+5. 服务重启时，遗留 `CANCEL_REQUESTED` 自动收口为 `CANCELLED`，遗留 `RUNNING` 标记为 `FAILED/SERVER_RESTARTED`。
+
+## 7. 健康检查
+
+### `GET /actuator/health`
+
+无需登录，返回整体健康状态；不会暴露凭据或内部异常栈。
+
+## 8. 推荐调用链路
+
+1. 注册或登录；
+2. 上传视频并调用 `/api/tasks/analyze`；
+3. 轮询 `/api/tasks/{taskId}` 直到 `SUCCESS`，再读取结果；
+4. 可创建用户知识库并上传文档，轮询上传响应中的处理 `taskId`；
+5. 待知识库 `READY` 后，以视频和用户知识库创建固定范围会话；
+6. 调用 SSE 问答，保存首个 `generationId`；
+7. 需要停止时调用回答取消接口；正常完成时读取 `done.references`；
+8. 删除视频或用户知识库时接收 HTTP 202，并轮询返回的删除 `taskId`。
+
+## 9. 已移除接口
+
+以下旧接口不再映射，预期返回 404：
+
+- MindAgent 绑定、同步、OAuth、Webhook、报告和演示文稿接口；
+- `POST /api/knowledge/vectorize/{taskId}`；
+- `GET /api/knowledge/status/{taskId}`；
+- `POST /api/tasks/{taskId}/cancel`。
