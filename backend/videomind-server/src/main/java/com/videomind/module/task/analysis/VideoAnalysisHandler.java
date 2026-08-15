@@ -161,12 +161,14 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
             if (isVirtualAudio(artifact.audioPath())
                     && completed.getChecksum().equals(sha256(artifact.audioPath()))) {
                 return AudioExtractionResult.builder().audioPath(artifact.audioPath())
-                        .durationSeconds(artifact.durationSeconds()).build();
+                        .durationSeconds(artifact.durationSeconds())
+                        .audioDurationSeconds(effectiveAudioDuration(artifact)).build();
             }
             Path path = Path.of(artifact.audioPath());
             if (Files.isRegularFile(path) && completed.getChecksum().equals(sha256(Files.readAllBytes(path)))) {
                 return AudioExtractionResult.builder().audioPath(path.toString())
-                        .durationSeconds(artifact.durationSeconds()).build();
+                        .durationSeconds(artifact.durationSeconds())
+                        .audioDurationSeconds(effectiveAudioDuration(artifact)).build();
             }
             log.warn("Audio checkpoint artifact missing or corrupted; re-extract, processingTaskId={}",
                     processingTaskId);
@@ -186,8 +188,14 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
             videos.updateById(data.video());
         }
         checkpoints.complete(processingTaskId, AUDIO_EXTRACTED,
-                json(new AudioArtifact(audioPath, extracted.getDurationSeconds())), checksum);
+                json(new AudioArtifact(audioPath, extracted.getDurationSeconds(),
+                        extracted.getAudioDurationSeconds())), checksum);
         return extracted;
+    }
+
+    private static Integer effectiveAudioDuration(AudioArtifact artifact) {
+        return artifact.audioDurationSeconds() == null
+                ? artifact.durationSeconds() : artifact.audioDurationSeconds();
     }
 
     private static int requireTranscriptVersion(VideoFile video) {
@@ -248,7 +256,7 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
         return value != null && value.startsWith("mock://");
     }
 
-    private record AudioArtifact(String audioPath, Integer durationSeconds) {
+    private record AudioArtifact(String audioPath, Integer durationSeconds, Integer audioDurationSeconds) {
     }
 
     private record TaskData(TaskRecord task, VideoFile video) {

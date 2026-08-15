@@ -22,16 +22,18 @@ public class TencentTimestampSpeechToTextClient implements SpeechToTextClient {
     @Override
     public AsrResult transcribe(Long processingTaskId, AudioExtractionResult audio,
                                 VideoFile videoFile, TaskRecord taskRecord) {
-        long durationMs = Math.multiplyExact(requireDurationSeconds(audio), 1_000L);
+        long durationMs = Math.multiplyExact(requireAudioDurationSeconds(audio), 1_000L);
         var artifacts = chunker.split(audio);
         var completed = transcriber.transcribe(processingTaskId, artifacts, taskRecord);
         return merger.merge(completed, durationMs);
     }
 
-    private static long requireDurationSeconds(AudioExtractionResult audio) {
-        if (audio == null || audio.getDurationSeconds() == null || audio.getDurationSeconds() <= 0) {
+    private static long requireAudioDurationSeconds(AudioExtractionResult audio) {
+        Integer duration = audio == null ? null : audio.getAudioDurationSeconds();
+        if (duration == null && audio != null) duration = audio.getDurationSeconds();
+        if (duration == null || duration <= 0) {
             throw new IllegalStateException("ASR_AUDIO_DURATION_MISSING");
         }
-        return audio.getDurationSeconds();
+        return duration;
     }
 }

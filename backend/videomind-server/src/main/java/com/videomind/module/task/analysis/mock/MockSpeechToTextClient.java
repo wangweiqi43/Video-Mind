@@ -28,8 +28,13 @@ public class MockSpeechToTextClient implements SpeechToTextClient {
                 .language("zh-CN")
                 .text(text)
                 .segments(List.of(new AsrSegmentResult(0,
-                        Math.max(1, audio.getDurationSeconds() == null ? 180 : audio.getDurationSeconds()) * 1_000L,
+                        Math.max(1, effectiveDuration(audio)) * 1_000L,
                         text, 0)))
                 .build();
+    }
+
+    private static int effectiveDuration(AudioExtractionResult audio) {
+        if (audio.getAudioDurationSeconds() != null) return audio.getAudioDurationSeconds();
+        return audio.getDurationSeconds() == null ? 180 : audio.getDurationSeconds();
     }
 }

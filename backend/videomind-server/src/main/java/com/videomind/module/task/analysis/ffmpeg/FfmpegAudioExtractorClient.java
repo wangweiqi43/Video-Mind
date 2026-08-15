@@ -44,10 +44,13 @@ public class FfmpegAudioExtractorClient implements AudioExtractorClient {
             Integer durationSeconds = probeDurationIfAvailable(inputVideo);
             runFfmpeg(inputVideo, outputAudio, logFile);
             if (durationSeconds == null) durationSeconds = durationFromFfmpegLog(logFile);
+            Integer audioDurationSeconds = probeDurationIfAvailable(outputAudio);
+            if (audioDurationSeconds == null) audioDurationSeconds = pcmDurationSeconds(outputAudio);
 
             return AudioExtractionResult.builder()
                     .audioPath(outputAudio.toString())
                     .durationSeconds(durationSeconds)
+                    .audioDurationSeconds(audioDurationSeconds)
                     .build();
         } catch (BizException ex) {
             throw ex;
@@ -93,6 +96,13 @@ public class FfmpegAudioExtractorClient implements AudioExtractorClient {
                 + Integer.parseInt(matcher.group(2)) * 60d
                 + Double.parseDouble(matcher.group(3));
         return seconds > 0 ? Math.max(1, (int) Math.ceil(seconds)) : null;
+    }
+
+    private Integer pcmDurationSeconds(Path audioFile) throws Exception {
+        long payloadBytes = Math.max(0, Files.size(audioFile) - 44);
+        double seconds = payloadBytes / (16_000d * 2d);
+        if (seconds <= 0) throw new BizException(500, "FFmpeg 生成的音频没有有效时长");
+        return Math.max(1, (int) Math.ceil(seconds));
     }
 
     private void downloadVideo(VideoFile videoFile, Path inputVideo) throws Exception {

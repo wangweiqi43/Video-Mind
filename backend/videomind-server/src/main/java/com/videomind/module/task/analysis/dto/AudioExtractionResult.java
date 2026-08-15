@@ -9,5 +9,6 @@ public class AudioExtractionResult {
 
     private String audioPath;
     private Integer durationSeconds;
+    private Integer audioDurationSeconds;
 }
 

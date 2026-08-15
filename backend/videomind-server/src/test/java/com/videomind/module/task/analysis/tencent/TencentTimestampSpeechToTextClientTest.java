@@ -29,7 +29,7 @@ class TencentTimestampSpeechToTextClientTest {
     @Test
     void delegatesEveryTencentAudioToDurableChunkPipeline() {
         AudioExtractionResult audio = AudioExtractionResult.builder()
-                .audioPath("audio.wav").durationSeconds(250).build();
+                .audioPath("audio.wav").durationSeconds(250).audioDurationSeconds(5).build();
         TaskRecord task = new TaskRecord();
         AudioChunkArtifact artifact = new AudioChunkArtifact(
                 new AudioChunkPlan(0, 0, 121_000, 0, 120_000),
@@ -40,13 +40,13 @@ class TencentTimestampSpeechToTextClientTest {
         AsrResult expected = AsrResult.builder().language("zh-CN").text("第一句").build();
         when(chunker.split(audio)).thenReturn(List.of(artifact));
         when(transcriber.transcribe(99L, List.of(artifact), task)).thenReturn(List.of(completed));
-        when(merger.merge(List.of(completed), 250_000L)).thenReturn(expected);
+        when(merger.merge(List.of(completed), 5_000L)).thenReturn(expected);
 
         assertThat(client.transcribe(99L, audio, new VideoFile(), task)).isSameAs(expected);
 
         verify(chunker).split(audio);
         verify(transcriber).transcribe(99L, List.of(artifact), task);
-        verify(merger).merge(List.of(completed), 250_000L);
+        verify(merger).merge(List.of(completed), 5_000L);
     }
 
     @Test

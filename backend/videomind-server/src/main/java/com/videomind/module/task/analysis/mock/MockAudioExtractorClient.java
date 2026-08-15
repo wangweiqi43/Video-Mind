@@ -16,6 +16,7 @@ public class MockAudioExtractorClient implements AudioExtractorClient {
         return AudioExtractionResult.builder()
                 .audioPath("mock://audio/task-" + taskRecord.getId() + ".wav")
                 .durationSeconds(180)
+                .audioDurationSeconds(180)
                 .build();
     }
 }

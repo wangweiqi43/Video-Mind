@@ -27,7 +27,7 @@ public class FfmpegAudioChunker {
     private final TencentAsrProperties asr;
 
     public List<AudioChunkArtifact> split(AudioExtractionResult audio) {
-        if (audio == null || audio.getDurationSeconds() == null || audio.getDurationSeconds() <= 0) {
+        if (audio == null || effectiveDurationSeconds(audio) <= 0) {
             throw new BizException(500, "ASR 音频缺少有效时长");
         }
         Path source = Path.of(audio.getAudioPath()).toAbsolutePath().normalize();
@@ -38,7 +38,7 @@ public class FfmpegAudioChunker {
             Path outputDir = source.getParent().resolve("asr-chunks").normalize();
             Files.createDirectories(outputDir);
             List<AudioChunkArtifact> result = new ArrayList<>();
-            for (AudioChunkPlan plan : planner.plan(audio.getDurationSeconds() * 1_000L)) {
+            for (AudioChunkPlan plan : planner.plan(effectiveDurationSeconds(audio) * 1_000L)) {
                 result.add(createChunk(source, outputDir, plan));
             }
             return List.copyOf(result);
@@ -47,6 +47,12 @@ public class FfmpegAudioChunker {
         } catch (Exception failure) {
             throw new BizException(500, "FFmpeg 切分 ASR 音频失败：" + failure.getMessage());
         }
+    }
+
+    private static int effectiveDurationSeconds(AudioExtractionResult audio) {
+        Integer audioDuration = audio == null ? null : audio.getAudioDurationSeconds();
+        Integer videoDuration = audio == null ? null : audio.getDurationSeconds();
+        return audioDuration != null ? audioDuration : videoDuration == null ? 0 : videoDuration;
     }
 
     private AudioChunkArtifact createChunk(Path source, Path outputDir, AudioChunkPlan plan) throws Exception {

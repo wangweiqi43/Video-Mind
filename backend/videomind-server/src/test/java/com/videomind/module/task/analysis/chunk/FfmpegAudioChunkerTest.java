@@ -27,7 +27,7 @@ class FfmpegAudioChunkerTest {
         TencentAsrProperties asr = properties(2, 250, 1024 * 1024);
         FfmpegAudioChunker chunker = chunker(binary, asr);
         AudioExtractionResult audio = AudioExtractionResult.builder()
-                .audioPath(source.toString()).durationSeconds(5).build();
+                .audioPath(source.toString()).durationSeconds(250).audioDurationSeconds(5).build();
 
         List<AudioChunkArtifact> first = chunker.split(audio);
         List<AudioChunkArtifact> second = chunker.split(audio);
