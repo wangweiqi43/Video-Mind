@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { decodeChatDelta } from '../src/chatStream.js'
+import { decodeChatDelta, decodeWorkflowEvent } from '../src/chatStream.js'
 import { normalizeHistoryMessages, sessionPreview, sessionTitle } from '../src/chatHistory.js'
 import { normalizeMarkdownForRendering, renderSafeMarkdown } from '../src/safeMarkdown.js'
 
@@ -9,6 +9,24 @@ test('decodes JSON-wrapped whitespace deltas and keeps legacy text events', () =
   assert.equal(decodeChatDelta('{"delta":"\\n"}'), '\n')
   assert.equal(decodeChatDelta('{"delta":"  leading"}'), '  leading')
   assert.equal(decodeChatDelta('legacy delta'), 'legacy delta')
+})
+
+test('accepts only the public four-field workflow event contract', () => {
+  assert.deepEqual(decodeWorkflowEvent(JSON.stringify({
+    phase: 'TOOL',
+    stepId: 's1',
+    status: 'COMPLETED',
+    message: '工具调用完成',
+    tool: 'VIDEO_TIMELINE_RETRIEVAL',
+    evidenceIds: ['ev-1']
+  })), {
+    phase: 'TOOL',
+    stepId: 's1',
+    status: 'COMPLETED',
+    message: '工具调用完成'
+  })
+  assert.equal(decodeWorkflowEvent('{"phase":"TOOL"}'), null)
+  assert.equal(decodeWorkflowEvent('not-json'), null)
 })
 
 test('renders a completed Markdown answer without collapsing its text', () => {

@@ -18,6 +18,7 @@ import com.videomind.module.agent.workflow.AgentWorkflowModels.StepResult;
 import com.videomind.module.agent.workflow.AgentWorkflowModels.Verdict;
 import com.videomind.module.knowledge.retrieval.Evidence;
 import java.util.List;
+import java.util.ArrayList;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
@@ -112,5 +113,25 @@ class PlannerExecutorCriticWorkflowTest {
         assertThat(result.status()).isEqualTo(Status.DEADLINE_EXCEEDED);
         assertThat(result.toolCalls()).isEqualTo(1);
         verify(critic, never()).review(any(), any(), any(), any(Integer.class));
+    }
+
+    @Test
+    void emitsPublicWorkflowEventsInExecutionOrder() {
+        List<WorkflowEvent> events = new ArrayList<>();
+        Request observed = new Request(7L, 51L, List.of(11L), "q", Mode.STANDARD, events::add);
+        Evidence evidence = new Evidence("ev-1", 11L, 1L, 1L, 0, 0, "title", "heading",
+                "content", "parent", 0L, 1_000L, 0.1, 0.9, 0.8);
+        when(planner.plan(any(), any(), any(), any(Integer.class))).thenReturn(plan);
+        when(executor.execute(any(), any())).thenReturn(new StepResult("s1", List.of(evidence)));
+        when(critic.review(any(), any(), any(), any(Integer.class)))
+                .thenReturn(new Critique(Verdict.ACCEPT, "evidence complete"));
+
+        var result = workflow.run(observed);
+
+        assertThat(result.status()).isEqualTo(Status.COMPLETED);
+        assertThat(events).extracting(event -> event.phase() + ":" + event.status())
+                .containsExactly("PLAN:COMPLETED", "TOOL:STARTED", "TOOL:COMPLETED",
+                        "CRITIC:ACCEPT", "WORKFLOW:COMPLETED");
+        assertThat(events.get(2).evidenceIds()).containsExactly("ev-1");
     }
 }

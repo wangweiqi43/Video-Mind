@@ -6,14 +6,17 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.videomind.common.enums.MessageRole;
 import com.videomind.common.exception.BizException;
+import com.videomind.module.agent.audit.WorkflowAuditService;
 import com.videomind.module.agent.workflow.AgentWorkflowModels;
 import com.videomind.module.agent.workflow.PlannerExecutorCriticWorkflow;
+import com.videomind.module.agent.workflow.WorkflowObserver;
 import com.videomind.module.chat.dto.ChatMessageRequest;
 import com.videomind.module.chat.dto.ChatMessageResponse;
 import com.videomind.module.chat.dto.ChatSessionCreateResponse;
 import com.videomind.module.chat.dto.ChatSessionResponse;
 import com.videomind.module.chat.dto.ConversationContext;
 import com.videomind.module.chat.dto.RagReference;
+import com.videomind.module.chat.dto.WorkflowSseEvent;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
 import com.videomind.module.chat.llm.ChatAnswerClient;
@@ -52,6 +55,7 @@ public class ChatServiceImpl implements ChatService {
     private final VideoFileService videoFileService;
     private final KnowledgeBaseService knowledgeBaseService;
     private final PlannerExecutorCriticWorkflow workflow;
+    private final WorkflowAuditService workflowAudits;
 
     @Override
     public ChatSessionCreateResponse createSession(Long videoId, List<Long> selectedKnowledgeBaseIds, Long userId) {
@@ -88,11 +92,20 @@ public class ChatServiceImpl implements ChatService {
         List<Long> scope = sessionScope(session, userId);
         ConversationContext context = conversationContextService.getContext(session.getId(), userId, scope);
         insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
-        ChatOutcome outcome = answer(request, userId, session, context);
-        ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
-                outcome.answer(), json(outcome.references()));
-        finishTurn(session, userId, request.getQuestion(), outcome.answer());
-        return response(assistant, outcome.references());
+        RetrievalOutcome retrieved = retrieve(request, userId, session, WorkflowObserver.NOOP);
+        try {
+            String answer = chatAnswerClient.answer(request.getQuestion(), retrieved.references(),
+                    turnAssembler.toMessages(context.getRecentTurns(), userId), summary(context),
+                    request.getAnswerScope());
+            ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
+                    answer, json(retrieved.references()));
+            finishTurn(session, userId, request.getQuestion(), answer);
+            retrieved.audit().answerCompleted(answer);
+            return response(assistant, retrieved.references());
+        } catch (RuntimeException failure) {
+            retrieved.audit().failed(failure);
+            throw failure;
+        }
     }
 
     @Override
@@ -120,12 +133,16 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private void doStream(ChatMessageRequest request, Long userId, SseEmitter emitter) {
+        WorkflowAuditService.Session audit = null;
         try {
             ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
             List<Long> scope = sessionScope(session, userId);
             ConversationContext context = conversationContextService.getContext(session.getId(), userId, scope);
             insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
-            List<RagReference> references = retrieve(request, userId, session);
+            RetrievalOutcome retrieved = retrieve(request, userId, session,
+                    event -> sendEvent(emitter, "workflow", WorkflowSseEvent.from(event)));
+            audit = retrieved.audit();
+            List<RagReference> references = retrieved.references();
             List<ChatMessage> recent = turnAssembler.toMessages(context.getRecentTurns(), userId);
             StringBuilder answer = new StringBuilder();
             chatAnswerClient.streamAnswer(request.getQuestion(), references, recent, summary(context),
@@ -136,30 +153,39 @@ public class ChatServiceImpl implements ChatService {
             ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
                     answer.toString(), json(references));
             finishTurn(session, userId, request.getQuestion(), answer.toString());
+            audit.answerCompleted(answer.toString());
             sendEvent(emitter, "done", response(assistant, references));
             emitter.complete();
         } catch (Exception exception) {
+            if (audit != null) {
+                audit.failed(exception);
+            }
             sendEvent(emitter, "error", exception.getMessage());
             emitter.complete();
         }
     }
 
-    private ChatOutcome answer(ChatMessageRequest request, Long userId, ChatSession session,
-                               ConversationContext context) {
-        List<RagReference> references = retrieve(request, userId, session);
-        String answer = chatAnswerClient.answer(request.getQuestion(), references,
-                turnAssembler.toMessages(context.getRecentTurns(), userId), summary(context), request.getAnswerScope());
-        return new ChatOutcome(answer, references);
-    }
-
-    private List<RagReference> retrieve(ChatMessageRequest request, Long userId, ChatSession session) {
+    private RetrievalOutcome retrieve(ChatMessageRequest request, Long userId, ChatSession session,
+                                      WorkflowObserver downstream) {
         List<Long> scope = sessionScope(session, userId);
         boolean deep = Boolean.TRUE.equals(request.getDeepThinkingEnabled());
-        AgentWorkflowModels.Result result = workflow.run(new AgentWorkflowModels.Request(userId, session.getId(), scope,
-                request.getQuestion(), deep ? AgentWorkflowModels.Mode.DEEP : AgentWorkflowModels.Mode.STANDARD));
+        AgentWorkflowModels.Mode mode = deep ? AgentWorkflowModels.Mode.DEEP : AgentWorkflowModels.Mode.STANDARD;
+        AgentWorkflowModels.Request base = new AgentWorkflowModels.Request(userId, session.getId(), scope,
+                request.getQuestion(), mode);
+        WorkflowAuditService.Session audit = workflowAudits.start(base, downstream);
+        AgentWorkflowModels.Result result;
+        try {
+            result = workflow.run(new AgentWorkflowModels.Request(userId, session.getId(), scope,
+                    request.getQuestion(), mode, audit));
+            audit.workflowFinished(result);
+        } catch (RuntimeException failure) {
+            audit.failed(failure);
+            throw failure;
+        }
         Long videoKnowledgeBaseId = scope.isEmpty() ? null : scope.get(0);
-        return result.evidence().stream()
+        List<RagReference> references = result.evidence().stream()
                 .map(evidence -> reference(evidence, session.getVideoId(), videoKnowledgeBaseId)).toList();
+        return new RetrievalOutcome(references, audit);
     }
 
     private RagReference reference(Evidence value, Long videoId, Long videoKnowledgeBaseId) {
@@ -266,5 +292,5 @@ public class ChatServiceImpl implements ChatService {
         return !StringUtils.hasText(value) || value.length() <= max ? value : value.substring(0, max) + "...";
     }
 
-    private record ChatOutcome(String answer, List<RagReference> references) { }
+    private record RetrievalOutcome(List<RagReference> references, WorkflowAuditService.Session audit) { }
 }

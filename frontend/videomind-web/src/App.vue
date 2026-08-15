@@ -584,7 +584,8 @@ async function sendQuestion() {
       role: 'ASSISTANT',
       content: '',
       referencesJson: '',
-      references: []
+      references: [],
+      workflowStatus: ''
     }) - 1
     const assistantMessage = state.messages[assistantIndex]
     const typewriter = createTypewriter(assistantMessage)
@@ -594,13 +595,19 @@ async function sendQuestion() {
       question,
       state.answerScope,
       (delta) => {
-      typewriter.push(delta)
+        typewriter.push(delta)
+      },
+      false,
+      false,
+      (workflow) => {
+        assistantMessage.workflowStatus = workflow.message
       }
     )
     if (!assistantMessage.content && answer?.answer) {
       typewriter.push(answer.answer)
     }
     await typewriter.done()
+    assistantMessage.workflowStatus = ''
     assistantMessage.referencesJson = answer?.referencesJson
     assistantMessage.references = answer?.references || []
     await loadSessions(state.selectedVideo.id)
@@ -1044,6 +1051,9 @@ function compactParagraphs(lines) {
             <div v-else class="messages">
                   <div v-for="(message, index) in state.messages" :key="index" class="message" :class="message.role?.toLowerCase()">
                     <strong>{{ message.role === 'USER' ? '你' : 'VideoMind' }}</strong>
+                    <p v-if="message.workflowStatus && !message.content" class="workflow-status">
+                      {{ message.workflowStatus }}
+                    </p>
                     <p>{{ message.content }}</p>
                     <div v-if="parseRefs(message).length" class="references">
                       <span class="reference-heading">参考来源</span>

@@ -12,6 +12,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.videomind.common.enums.MessageRole;
+import com.videomind.module.agent.audit.WorkflowAuditService;
 import com.videomind.module.agent.workflow.AgentWorkflowModels;
 import com.videomind.module.agent.workflow.PlannerExecutorCriticWorkflow;
 import com.videomind.module.chat.dto.ChatMessageRequest;
@@ -45,14 +46,17 @@ class ChatServiceLocalWorkflowTest {
     private final VideoFileService videos = mock(VideoFileService.class);
     private final KnowledgeBaseService knowledgeBases = mock(KnowledgeBaseService.class);
     private final PlannerExecutorCriticWorkflow workflow = mock(PlannerExecutorCriticWorkflow.class);
+    private final WorkflowAuditService workflowAudits = mock(WorkflowAuditService.class);
+    private final WorkflowAuditService.Session audit = mock(WorkflowAuditService.Session.class);
     private final ChatServiceImpl service = new ChatServiceImpl(sessions, messages, answers, contexts, summaries,
-            turns, new ObjectMapper(), videos, knowledgeBases, workflow);
+            turns, new ObjectMapper(), videos, knowledgeBases, workflow, workflowAudits);
 
     @BeforeEach
     void setUp() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), "chat-test"),
                 ChatSession.class);
         when(videos.getVideoDetail(7L, 99L)).thenReturn(new VideoFile());
+        when(workflowAudits.start(any(), any())).thenReturn(audit);
     }
 
     @Test
@@ -105,6 +109,9 @@ class ChatServiceLocalWorkflowTest {
         assertThat(workflowRequest.getValue().knowledgeBaseIds()).containsExactly(10L, 20L);
         assertThat(workflowRequest.getValue().mode()).isEqualTo(AgentWorkflowModels.Mode.STANDARD);
         assertThat(workflowRequest.getValue().maxToolCalls()).isEqualTo(2);
+        assertThat(workflowRequest.getValue().observer()).isSameAs(audit);
+        verify(audit).workflowFinished(any());
+        verify(audit).answerCompleted("使用状态机和 CAS Lease");
         verify(contexts).refreshContext(13L, 99L, List.of(10L, 20L));
     }
 

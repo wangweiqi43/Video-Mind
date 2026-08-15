@@ -8,10 +8,16 @@ public final class AgentWorkflowModels {
     }
 
     public record Request(Long userId, Long conversationId, List<Long> knowledgeBaseIds,
-                          String question, Mode mode) {
+                          String question, Mode mode, WorkflowObserver observer) {
         public Request {
             knowledgeBaseIds = knowledgeBaseIds == null ? List.of() : List.copyOf(knowledgeBaseIds);
             mode = mode == null ? Mode.STANDARD : mode;
+            observer = observer == null ? WorkflowObserver.NOOP : observer;
+        }
+
+        public Request(Long userId, Long conversationId, List<Long> knowledgeBaseIds,
+                       String question, Mode mode) {
+            this(userId, conversationId, knowledgeBaseIds, question, mode, WorkflowObserver.NOOP);
         }
 
         public int maxToolCalls() {

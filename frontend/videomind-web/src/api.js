@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { decodeChatDelta } from './chatStream'
+import { decodeChatDelta, decodeWorkflowEvent } from './chatStream'
 
 const http = axios.create({
   baseURL: '/api',
@@ -85,8 +85,10 @@ export const api = {
   sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', webSearchEnabled = false, deepThinkingEnabled = false) {
     return http.post('/chat/message', { sessionId, videoId, question, answerScope, webSearchEnabled, deepThinkingEnabled })
   },
-  streamMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled = false, deepThinkingEnabled = false) {
-    return streamChatMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled, deepThinkingEnabled)
+  streamMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled = false,
+    deepThinkingEnabled = false, onWorkflow = () => {}) {
+    return streamChatMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled,
+      deepThinkingEnabled, onWorkflow)
   },
   listMessages(sessionId, videoId) {
     return http.get(`/chat/session/${sessionId}/messages`, { params: { videoId } })
@@ -107,7 +109,8 @@ export const api = {
   }
 }
 
-function streamChatMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled = false, deepThinkingEnabled = false) {
+function streamChatMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled = false,
+  deepThinkingEnabled = false, onWorkflow = () => {}) {
   const params = new URLSearchParams({
     sessionId: String(sessionId),
     videoId: String(videoId),
@@ -120,6 +123,10 @@ function streamChatMessage(sessionId, videoId, question, answerScope, onDelta, w
     const source = new EventSource(`/api/chat/message/stream?${params.toString()}`)
     source.addEventListener('delta', (event) => {
       onDelta(decodeChatDelta(event.data))
+    })
+    source.addEventListener('workflow', (event) => {
+      const workflow = decodeWorkflowEvent(event.data)
+      if (workflow) onWorkflow(workflow)
     })
     source.addEventListener('done', (event) => {
       source.close()
