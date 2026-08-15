@@ -24,8 +24,9 @@ VideoMind 是一个本地优先的 AI 视频理解与多知识库问答平台。
   → MySQL 本地事务创建 processing_task / mq_transaction_event / task_record
   → 提交事务消息
   → 消费者 Inbox 去重 + CAS Lease
-  → FFmpeg 提取音频
-  → 腾讯云时间戳 ASR
+  → FFmpeg 提取音频并记录实际音轨时长
+  → 120 秒逻辑分片（两侧各 1 秒上下文）
+  → 腾讯云 Base64 时间戳 ASR + 分片 TaskId 续跑
   → PaddleOCR 关键帧识别
   → 语音/OCR 时间轴融合
   → timeline.md + 视频系统知识库
@@ -107,7 +108,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start.ps1
 | 组件 | 职责 |
 | --- | --- |
 | MySQL | 用户、视频、任务状态机、Checkpoint、知识库版本、chunk 元数据、会话、消息和工作流审计 |
-| MinIO | 视频原件、用户文档、解析资产、临时音频和 `timeline.md` |
+| MinIO | 视频原件、用户文档、解析资产和 `timeline.md` |
 | Elasticsearch | 视频与文档 chunk 的 BM25/kNN 索引 |
 | Redis Stack | 分布式锁、限流和分片上传 Bitmap |
 | Cache Redis | 会话热快照和最近上下文；不可用时聊天回退 MySQL |
@@ -149,9 +150,23 @@ PENDING → PROCESSING → SUCCESS
 
 ### 腾讯云 ASR 输入
 
-- 不超过 5 MiB 的音频使用 `SourceType=1`，直接提交 Base64 `Data` 和编码前 `DataLen`，无需腾讯访问本机 MinIO。
-- 超过 5 MiB 时使用 URL 模式；此时 `MINIO_PRESIGN_ENDPOINT` 必须是腾讯云可从公网下载的地址。
+- 所有音频都使用 `SourceType=1`，直接提交 Base64 `Data` 和编码前 `DataLen`，腾讯云不需要访问本机 MinIO。
+- 音轨按 120 秒逻辑窗口切分，每片前后各保留 1 秒上下文；16 kHz、单声道、16-bit PCM 的最长分片约 3.9 MiB，低于 5 MiB 限制。
+- 合并时只保留句子中点属于当前逻辑窗口的结果，消除重叠区重复文本，再叠加分片起点得到原视频绝对时间。
+- `video_asr_chunk` 保存每片的音频摘要、模型签名、提交次数、腾讯 TaskId 和结果；状态为 `PLANNED → SUBMITTING → SUBMITTED → SUCCEEDED/FAILED`。
+- 消费者崩溃后，已有 TaskId 的分片继续轮询而不重新提交；超过腾讯任务 24 小时有效期后才重新创建任务。
+- 分片串行提交，默认并发为 1。视频流时长和实际音轨时长分别记录，ASR 只按实际音轨规划分片。
 - 默认引擎为 `16k_zh_en_2.0`，可通过 `TENCENT_ASR_ENGINE_MODEL` 调整。
+
+可调参数：
+
+```dotenv
+TENCENT_ASR_CHUNK_SECONDS=120
+TENCENT_ASR_CHUNK_OVERLAP_MS=1000
+TENCENT_ASR_MAX_INLINE_BYTES=5242880
+TENCENT_ASR_SUBMISSION_UNKNOWN_TIMEOUT_SECONDS=120
+TENCENT_ASR_PROVIDER_TASK_TTL_HOURS=24
+```
 
 ## 知识库与时间轴
 
@@ -251,11 +266,17 @@ git diff --check
 # 生成并验证 40 秒视频和短 PDF，不调用外部 API
 .\ops\e2e-local.ps1 -FixtureOnly
 
+# 生成并验证带 120/240 秒边界语音的 250 秒素材，不调用外部 API
+.\ops\e2e-local.ps1 -FixtureOnly -LongAsr
+
 # 检查凭据是否存在、内存、工具和九项本地服务；不调用外部 API
 .\ops\e2e-local.ps1 -PreflightOnly
 
 # 完整真实验收，同时注入 Broker 重启和 Cache Redis 故障
 .\ops\e2e-local.ps1 -ExerciseBrokerRestart
+
+# 长视频真实验收：三片 ASR，在第二片保存 TaskId 后重启 Broker
+.\ops\e2e-local.ps1 -LongAsr -ExerciseBrokerRestart -TimeoutSeconds 3600
 ```
 
 完整 E2E 会验证：
@@ -267,6 +288,7 @@ git diff --check
 - 重复分析复用原任务，不产生重复时间轴。
 - Broker 重启后任务恢复，Cache Redis 停止时聊天回退 MySQL，恢复后热快照回填。
 - 异步删除完成后，测试视频、知识库、ES 文档和解析记录全部清理。
+- `-LongAsr` 额外验证至少三个分片、120/240 秒边界、分片续轮询、重叠去重和分片状态物理清理。
 
 ## 故障排查
 
@@ -276,6 +298,6 @@ git diff --check
 - ES 首次索引超时：Docker Desktop bind mount 冷启动可能较慢，可调整 `ELASTICSEARCH_READ_TIMEOUT_MILLIS`。
 - 8080 或 5173 被占用：`start.ps1` 会报告占用进程，不会终止未知进程。
 - Cache Redis 故障：聊天应继续从 MySQL 重建；恢复后下一轮请求回填热快照。
-- 大于 5 MiB 的 ASR 音频：必须配置公网可达的 `MINIO_PRESIGN_ENDPOINT`，否则使用音频切分或公开对象存储。
+- ASR 分片仍超过 5 MiB：减小 `TENCENT_ASR_CHUNK_SECONDS`，并确认 FFmpeg 输出为 16 kHz、单声道、16-bit PCM；不要改回公网 URL 模式。
 
 真实凭据、`.env`、`runtime/`、模型缓存和 E2E 产物都不得提交到 Git。
