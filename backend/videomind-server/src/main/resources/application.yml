@@ -64,7 +64,14 @@ videomind:
     branch-queue-capacity: ${VIDEO_ANALYSIS_BRANCH_QUEUE_CAPACITY:8}
   agent:
     workflow:
-      decision-timeout-millis: ${AGENT_DECISION_TIMEOUT_MILLIS:10000}
+      planner-timeout-millis: ${AGENT_PLANNER_TIMEOUT_MILLIS:30000}
+      executor-timeout-millis: ${AGENT_EXECUTOR_TIMEOUT_MILLIS:40000}
+      critic-timeout-millis: ${AGENT_CRITIC_TIMEOUT_MILLIS:30000}
+      max-tool-calls: ${AGENT_MAX_TOOL_CALLS:6}
+      max-replans: ${AGENT_MAX_REPLANS:1}
+      max-critic-candidates: ${AGENT_MAX_CRITIC_CANDIDATES:12}
+      max-accepted-evidence: ${AGENT_MAX_ACCEPTED_EVIDENCE:6}
+      max-evidence-chars: ${AGENT_MAX_EVIDENCE_CHARS:1200}
   auth:
     jwt-secret: ${VIDEOMIND_JWT_SECRET}
     access-minutes: ${VIDEOMIND_ACCESS_MINUTES:15}
@@ -154,6 +161,7 @@ videomind:
       provider-task-ttl-hours: ${TENCENT_ASR_PROVIDER_TASK_TTL_HOURS:24}
     summary:
       mode: ${VIDEOMIND_SUMMARY_MODE:real}
+      base-url: ${SUMMARY_API_BASE_URL:https://api.siliconflow.cn/v1}
       endpoint: ${SUMMARY_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}
       api-key: "${SUMMARY_API_KEY:${SILICONFLOW_API_KEY:}}"
       model: ${SUMMARY_MODEL:deepseek-ai/DeepSeek-V4-Flash}
@@ -174,6 +182,7 @@ videomind:
       timeout-seconds: ${RERANK_TIMEOUT_SECONDS:120}
     chat:
       mode: ${VIDEOMIND_CHAT_MODE:real}
+      base-url: ${CHAT_API_BASE_URL:https://api.siliconflow.cn/v1}
       endpoint: ${CHAT_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}
       api-key: "${CHAT_API_KEY:${SILICONFLOW_API_KEY:}}"
       model: ${CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}

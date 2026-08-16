@@ -9,6 +9,7 @@ import com.videomind.module.chat.dto.ChatSessionCreateRequest;
 import com.videomind.module.chat.dto.ChatSessionCreateResponse;
 import com.videomind.module.chat.dto.ChatSessionResponse;
 import com.videomind.module.chat.entity.ChatMessage;
+import com.videomind.module.chat.dto.ChatMessageView;
 import com.videomind.module.chat.service.ChatService;
 import com.videomind.module.chat.generation.ChatGenerationCancellationService;
 import jakarta.validation.Valid;
@@ -60,8 +61,7 @@ public class ChatController {
             @RequestParam Long videoId,
             @RequestParam String question,
             @RequestParam(defaultValue = "KNOWLEDGE_EXTENDED") String answerScope,
-            @RequestParam(defaultValue = "false") boolean webSearchEnabled,
-            @RequestParam(defaultValue = "false") boolean deepThinkingEnabled
+            @RequestParam(defaultValue = "false") boolean webSearchEnabled
     ) {
         ChatMessageRequest request = new ChatMessageRequest();
         request.setSessionId(sessionId);
@@ -69,12 +69,11 @@ public class ChatController {
         request.setQuestion(question);
         request.setAnswerScope(answerScope);
         request.setWebSearchEnabled(webSearchEnabled);
-        request.setDeepThinkingEnabled(deepThinkingEnabled);
         return chatService.streamMessage(request, MockUserContext.currentUserId());
     }
 
     @GetMapping("/session/{sessionId}/messages")
-    public ApiResponse<List<ChatMessage>> listMessages(
+    public ApiResponse<List<ChatMessageView>> listMessages(
             @PathVariable Long sessionId,
             @RequestParam Long videoId
     ) {

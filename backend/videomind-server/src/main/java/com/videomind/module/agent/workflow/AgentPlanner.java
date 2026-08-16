@@ -5,5 +5,9 @@ import com.videomind.module.agent.workflow.AgentWorkflowModels.Plan;
 import com.videomind.module.agent.workflow.AgentWorkflowModels.Request;
 
 public interface AgentPlanner {
-    Plan plan(Request request, Plan previous, Critique critique, int generation);
+    Plan plan(Request request, Plan previous, Critique critique, int generation, long timeoutMillis);
+
+    default Plan plan(Request request, Plan previous, Critique critique, int generation) {
+        return plan(request, previous, critique, generation, Long.MAX_VALUE);
+    }
 }

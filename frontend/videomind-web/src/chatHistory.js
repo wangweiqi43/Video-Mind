@@ -5,6 +5,8 @@ export function normalizeHistoryMessages(messages) {
     role: String(message?.role || 'ASSISTANT').toUpperCase(),
     content: String(message?.content || ''),
     references: normalizeReferences(message),
+    feedback: message?.feedback || null,
+    feedbackSubmitting: false,
     streaming: false,
     failed: false
   }))

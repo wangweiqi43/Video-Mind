@@ -10,8 +10,10 @@ import lombok.Data;
 public class ChatMessageResponse {
 
     private Long messageId;
+    private Long generationId;
     private String answer;
     private List<RagReference> references;
     private String referencesJson;
+    private ChatFeedbackResponse feedback;
     private LocalDateTime createdTime;
 }

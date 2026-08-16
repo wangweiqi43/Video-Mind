@@ -116,16 +116,22 @@ export const api = {
   listSessions(videoId) {
     return http.get('/chat/session/list', { params: { videoId } })
   },
-  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', webSearchEnabled = false, deepThinkingEnabled = false) {
-    return http.post('/chat/message', { sessionId, videoId, question, answerScope, webSearchEnabled, deepThinkingEnabled })
+  sendMessage(sessionId, videoId, question, answerScope = 'KNOWLEDGE_EXTENDED', webSearchEnabled = false) {
+    return http.post('/chat/message', { sessionId, videoId, question, answerScope, webSearchEnabled })
   },
   streamMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled = false,
-    deepThinkingEnabled = false, onWorkflow = () => {}) {
+    onWorkflow = () => {}) {
     return streamChatMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled,
-      deepThinkingEnabled, onWorkflow)
+      onWorkflow)
   },
   listMessages(sessionId, videoId) {
     return http.get(`/chat/session/${sessionId}/messages`, { params: { videoId } })
+  },
+  saveMessageFeedback(messageId, payload) {
+    return http.put(`/chat/messages/${messageId}/feedback`, payload)
+  },
+  deleteMessageFeedback(messageId) {
+    return http.delete(`/chat/messages/${messageId}/feedback`)
   },
   listKnowledgeBases() {
     return http.get('/knowledge-bases')
@@ -150,14 +156,13 @@ export const api = {
 }
 
 function streamChatMessage(sessionId, videoId, question, answerScope, onDelta, webSearchEnabled = false,
-  deepThinkingEnabled = false, onWorkflow = () => {}) {
+  onWorkflow = () => {}) {
   const params = new URLSearchParams({
     sessionId: String(sessionId),
     videoId: String(videoId),
     question,
     answerScope,
-    webSearchEnabled: String(Boolean(webSearchEnabled)),
-    deepThinkingEnabled: String(Boolean(deepThinkingEnabled))
+    webSearchEnabled: String(Boolean(webSearchEnabled))
   })
   let source
   let rejectStream

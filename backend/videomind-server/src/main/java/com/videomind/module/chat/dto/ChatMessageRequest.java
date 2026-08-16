@@ -21,6 +21,4 @@ public class ChatMessageRequest {
     private String answerScope = "KNOWLEDGE_EXTENDED";
 
     private Boolean webSearchEnabled = false;
-
-    private Boolean deepThinkingEnabled = false;
 }

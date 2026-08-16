@@ -12,10 +12,12 @@ import com.videomind.module.agent.workflow.PlannerExecutorCriticWorkflow;
 import com.videomind.module.agent.workflow.WorkflowObserver;
 import com.videomind.module.chat.dto.ChatMessageRequest;
 import com.videomind.module.chat.dto.ChatMessageResponse;
+import com.videomind.module.chat.dto.ChatMessageView;
 import com.videomind.module.chat.dto.ChatGenerationStatusResponse;
 import com.videomind.module.chat.dto.ChatSessionCreateResponse;
 import com.videomind.module.chat.dto.ChatSessionResponse;
 import com.videomind.module.chat.dto.ConversationContext;
+import com.videomind.module.chat.dto.ConversationTurn;
 import com.videomind.module.chat.dto.RagReference;
 import com.videomind.module.chat.dto.WorkflowSseEvent;
 import com.videomind.module.chat.entity.ChatMessage;
@@ -27,6 +29,7 @@ import com.videomind.module.chat.llm.ChatAnswerClient;
 import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.mapper.ChatSessionMapper;
 import com.videomind.module.chat.service.ChatService;
+import com.videomind.module.chat.service.ChatFeedbackService;
 import com.videomind.module.chat.service.ConversationContextService;
 import com.videomind.module.chat.service.ConversationSummaryService;
 import com.videomind.module.chat.support.ConversationTurnAssembler;
@@ -62,6 +65,7 @@ public class ChatServiceImpl implements ChatService {
     private final PlannerExecutorCriticWorkflow workflow;
     private final WorkflowAuditService workflowAudits;
     private final ChatGenerationCancellationRegistry generationCancellations;
+    private final ChatFeedbackService chatFeedbackService;
 
     @Override
     public ChatSessionCreateResponse createSession(Long videoId, List<Long> selectedKnowledgeBaseIds, Long userId) {
@@ -97,19 +101,23 @@ public class ChatServiceImpl implements ChatService {
         ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
         List<Long> scope = sessionScope(session, userId);
         ConversationContext context = conversationContextService.getContext(session.getId(), userId, scope);
-        insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
-        RetrievalOutcome retrieved = retrieve(request, userId, session, WorkflowObserver.NOOP, ignored -> { });
+        insertMessage(session.getId(), userId, null, MessageRole.USER, request.getQuestion(), null);
+        RetrievalOutcome retrieved = retrieve(request, userId, session, context,
+                WorkflowObserver.NOOP, ignored -> { });
         try {
             retrieved.cancellation().check();
-            String answer = chatAnswerClient.answer(request.getQuestion(), retrieved.references(),
-                    turnAssembler.toMessages(context.getRecentTurns(), userId), summary(context),
-                    request.getAnswerScope());
+            String answer = fixedAnswer(retrieved.result().status());
+            if (answer == null) {
+                answer = chatAnswerClient.answer(request.getQuestion(), retrieved.references(),
+                        turnAssembler.toMessages(context.getRecentTurns(), userId), summary(context),
+                        request.getAnswerScope());
+            }
             retrieved.cancellation().check();
             if (!retrieved.audit().answerCompleted(answer)) {
                 throw new ChatGenerationCancelledException(retrieved.audit().generationId());
             }
-            ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
-                    answer, json(retrieved.references()));
+            ChatMessage assistant = insertMessage(session.getId(), userId, retrieved.audit().generationId(),
+                    MessageRole.ASSISTANT, answer, json(retrieved.references()));
             finishTurn(session, userId, request.getQuestion(), answer);
             return response(assistant, retrieved.references());
         } catch (ChatGenerationCancelledException cancelled) {
@@ -140,11 +148,18 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public List<ChatMessage> listMessages(Long sessionId, Long videoId, Long userId) {
+    public List<ChatMessageView> listMessages(Long sessionId, Long videoId, Long userId) {
         getSession(sessionId, videoId, userId);
+        Map<Long, com.videomind.module.chat.dto.ChatFeedbackResponse> feedback =
+                chatFeedbackService.findBySession(sessionId, userId);
         return chatMessageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getSessionId, sessionId).eq(ChatMessage::getUserId, userId)
-                .orderByAsc(ChatMessage::getCreatedTime));
+                .orderByAsc(ChatMessage::getCreatedTime)).stream()
+                .map(value -> ChatMessageView.builder().id(value.getId()).sessionId(value.getSessionId())
+                        .userId(value.getUserId()).generationId(value.getGenerationId()).role(value.getRole())
+                        .content(value.getContent()).referencesJson(value.getReferencesJson())
+                        .createdTime(value.getCreatedTime()).feedback(feedback.get(value.getId())).build())
+                .toList();
     }
 
     private void doStream(ChatMessageRequest request, Long userId, SseEmitter emitter) {
@@ -155,8 +170,8 @@ public class ChatServiceImpl implements ChatService {
             ChatSession session = getSession(request.getSessionId(), request.getVideoId(), userId);
             List<Long> scope = sessionScope(session, userId);
             ConversationContext context = conversationContextService.getContext(session.getId(), userId, scope);
-            insertMessage(session.getId(), userId, MessageRole.USER, request.getQuestion(), null);
-            RetrievalOutcome retrieved = retrieve(request, userId, session,
+            insertMessage(session.getId(), userId, null, MessageRole.USER, request.getQuestion(), null);
+            RetrievalOutcome retrieved = retrieve(request, userId, session, context,
                     event -> sendEvent(emitter, "workflow", WorkflowSseEvent.from(event)),
                     generationId -> sendEvent(emitter, "generation",
                             new ChatGenerationStatusResponse(generationId, "RUNNING")));
@@ -164,17 +179,23 @@ public class ChatServiceImpl implements ChatService {
             cancellation = retrieved.cancellation();
             List<RagReference> references = retrieved.references();
             List<ChatMessage> recent = turnAssembler.toMessages(context.getRecentTurns(), userId);
-            chatAnswerClient.streamAnswer(request.getQuestion(), references, recent, summary(context),
-                    request.getAnswerScope(), delta -> {
-                        answer.append(delta);
-                        sendEvent(emitter, "delta", Map.of("delta", delta));
-                    }, cancellation);
+            String fixed = fixedAnswer(retrieved.result().status());
+            if (fixed != null) {
+                answer.append(fixed);
+                sendEvent(emitter, "delta", Map.of("delta", fixed));
+            } else {
+                chatAnswerClient.streamAnswer(request.getQuestion(), references, recent, summary(context),
+                        request.getAnswerScope(), delta -> {
+                            answer.append(delta);
+                            sendEvent(emitter, "delta", Map.of("delta", delta));
+                        }, cancellation);
+            }
             cancellation.check();
             if (!audit.answerCompleted(answer.toString())) {
                 throw new ChatGenerationCancelledException(audit.generationId());
             }
-            ChatMessage assistant = insertMessage(session.getId(), userId, MessageRole.ASSISTANT,
-                    answer.toString(), json(references));
+            ChatMessage assistant = insertMessage(session.getId(), userId, audit.generationId(),
+                    MessageRole.ASSISTANT, answer.toString(), json(references));
             finishTurn(session, userId, request.getQuestion(), answer.toString());
             sendEvent(emitter, "done", response(assistant, references));
             emitter.complete();
@@ -200,19 +221,20 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private RetrievalOutcome retrieve(ChatMessageRequest request, Long userId, ChatSession session,
+                                       ConversationContext context,
                                        WorkflowObserver downstream, Consumer<Long> onGenerationStarted) {
         List<Long> scope = sessionScope(session, userId);
-        boolean deep = Boolean.TRUE.equals(request.getDeepThinkingEnabled());
-        AgentWorkflowModels.Mode mode = deep ? AgentWorkflowModels.Mode.DEEP : AgentWorkflowModels.Mode.STANDARD;
-        AgentWorkflowModels.Request base = new AgentWorkflowModels.Request(userId, session.getId(), scope,
-                request.getQuestion(), mode);
+        AgentWorkflowModels.KnowledgeScope knowledgeScope = AgentWorkflowModels.KnowledgeScope.fromOrderedIds(scope);
+        AgentWorkflowModels.ConversationSnapshot snapshot = snapshot(context);
+        AgentWorkflowModels.Request base = new AgentWorkflowModels.Request(userId, session.getId(), knowledgeScope,
+                snapshot, request.getQuestion());
         WorkflowAuditService.Session audit = workflowAudits.start(base, downstream);
         ChatGenerationCancellationToken cancellation = generationCancellations.activate(audit.generationId());
         onGenerationStarted.accept(audit.generationId());
         AgentWorkflowModels.Result result;
         try {
-            result = workflow.run(new AgentWorkflowModels.Request(userId, session.getId(), scope,
-                    request.getQuestion(), mode, audit, cancellation::check));
+            result = workflow.run(new AgentWorkflowModels.Request(userId, session.getId(), knowledgeScope,
+                    snapshot, request.getQuestion(), audit, cancellation::check));
             audit.workflowFinished(result);
         } catch (ChatGenerationCancelledException cancelled) {
             audit.cancelled(null);
@@ -226,7 +248,7 @@ public class ChatServiceImpl implements ChatService {
         Long videoKnowledgeBaseId = scope.isEmpty() ? null : scope.get(0);
         List<RagReference> references = result.evidence().stream()
                 .map(evidence -> reference(evidence, session.getVideoId(), videoKnowledgeBaseId)).toList();
-        return new RetrievalOutcome(references, audit, cancellation);
+        return new RetrievalOutcome(references, audit, cancellation, result);
     }
 
     private RagReference reference(Evidence value, Long videoId, Long videoKnowledgeBaseId) {
@@ -264,10 +286,12 @@ public class ChatServiceImpl implements ChatService {
         return scope;
     }
 
-    private ChatMessage insertMessage(Long sessionId, Long userId, MessageRole role, String content, String refs) {
+    private ChatMessage insertMessage(Long sessionId, Long userId, Long generationId,
+                                      MessageRole role, String content, String refs) {
         ChatMessage value = new ChatMessage();
         value.setSessionId(sessionId);
         value.setUserId(userId);
+        value.setGenerationId(generationId);
         value.setRole(role);
         value.setContent(content);
         value.setReferencesJson(refs);
@@ -307,6 +331,31 @@ public class ChatServiceImpl implements ChatService {
         return context == null || context.getSummary() == null ? "" : context.getSummary().getSummaryText();
     }
 
+    private AgentWorkflowModels.ConversationSnapshot snapshot(ConversationContext context) {
+        if (context == null) return AgentWorkflowModels.ConversationSnapshot.EMPTY;
+        List<String> turns = context.getRecentTurns() == null ? List.of() : context.getRecentTurns().stream()
+                .skip(Math.max(0, context.getRecentTurns().size() - 6L))
+                .map(this::snapshotTurn).toList();
+        return new AgentWorkflowModels.ConversationSnapshot(summary(context), turns);
+    }
+
+    private String snapshotTurn(ConversationTurn turn) {
+        String value = "用户：" + (turn.getQuestion() == null ? "" : turn.getQuestion())
+                + "\n助手：" + (turn.getAnswer() == null ? "" : turn.getAnswer());
+        return shorten(value, 1_000);
+    }
+
+    private String fixedAnswer(AgentWorkflowModels.Status status) {
+        return switch (status) {
+            case OUT_OF_SCOPE -> "该问题超出当前视频和所选知识库的内容范围，因此我无法基于现有资料回答。";
+            case INSUFFICIENT_EVIDENCE -> "当前知识库中没有足够证据回答这个问题。";
+            case VERIFICATION_UNAVAILABLE, TOOL_BUDGET_EXCEEDED, DEADLINE_EXCEEDED ->
+                    "当前无法验证知识证据，请稍后重试。";
+            case DIRECT_CONVERSATION -> "你好，我可以围绕当前视频和所选知识库回答问题，并提供可追溯的参考来源。";
+            case COMPLETED -> null;
+        };
+    }
+
     private String json(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -324,7 +373,8 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private ChatMessageResponse response(ChatMessage message, List<RagReference> references) {
-        return ChatMessageResponse.builder().messageId(message.getId()).answer(message.getContent())
+        return ChatMessageResponse.builder().messageId(message.getId()).generationId(message.getGenerationId())
+                .answer(message.getContent())
                 .references(references).referencesJson(message.getReferencesJson())
                 .createdTime(message.getCreatedTime()).build();
     }
@@ -350,5 +400,6 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private record RetrievalOutcome(List<RagReference> references, WorkflowAuditService.Session audit,
-                                    ChatGenerationCancellationToken cancellation) { }
+                                    ChatGenerationCancellationToken cancellation,
+                                    AgentWorkflowModels.Result result) { }
 }

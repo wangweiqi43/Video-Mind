@@ -214,6 +214,15 @@ svg { display: block; }
 .references > button:hover { border-color: #c6c9f5; background: #fafaff; }.reference-time { color: var(--vm-accent); font-size: 12px; font-weight: 650; }
 .references > button > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }.references > button strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .references > button small { overflow: hidden; color: var(--vm-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }.references > button svg { width: 16px; height: 16px; fill: none; stroke: var(--vm-muted); stroke-width: 1.6; }
+.message-feedback { display: flex; align-items: center; gap: 5px; min-height: 28px; color: var(--vm-muted); }
+.message-feedback button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 5px; color: var(--vm-muted); background: transparent; cursor: pointer; }
+.message-feedback button:hover { border-color: var(--vm-border); color: var(--vm-accent); background: var(--vm-surface); }
+.message-feedback button.active { border-color: #c6c9f5; color: var(--vm-accent); background: var(--vm-accent-soft); }
+.message-feedback button:disabled { cursor: wait; opacity: .55; }
+.message-feedback svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.message-feedback span { margin-left: 3px; font-size: 11px; }
+.feedback-reason-list { display: grid; gap: 4px; margin-bottom: 16px; }
+.feedback-clear { margin-right: auto; padding: 8px 10px; border: 0; color: var(--vm-danger); background: transparent; cursor: pointer; }
 .assistant-empty, .assistant-state { margin: auto; max-width: 360px; display: grid; justify-items: center; gap: 10px; padding: 26px; color: var(--vm-muted); text-align: center; }
 .assistant-empty > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; color: var(--vm-accent); background: var(--vm-accent-soft); }.assistant-empty svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .assistant-empty strong, .assistant-state strong { color: var(--vm-text-soft); font-size: 15px; }.assistant-empty p, .assistant-state p { margin: 0; font-size: 13px; line-height: 1.65; }

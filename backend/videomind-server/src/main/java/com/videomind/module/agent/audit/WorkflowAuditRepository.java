@@ -36,7 +36,7 @@ public class WorkflowAuditRepository {
         generations.insert(generation);
         AgentExecution execution = new AgentExecution();
         execution.setGenerationId(generationId);
-        execution.setProfile(request.mode().name());
+        execution.setProfile("PEC_BOUNDED");
         execution.setState("RUNNING");
         execution.setToolCalls(0);
         execution.setReplanCount(0);
@@ -72,7 +72,7 @@ public class WorkflowAuditRepository {
         AgentExecution execution = new AgentExecution();
         execution.setId(executionId);
         execution.setState(result.status().name());
-        execution.setRoute(result.finalPlan() == null ? null : result.finalPlan().route());
+        execution.setRoute(result.finalPlan() == null ? null : result.finalPlan().route().name());
         execution.setToolCalls(result.toolCalls());
         execution.setReplanCount(result.replans());
         execution.setUpdatedTime(LocalDateTime.now());

@@ -15,35 +15,27 @@ import org.springframework.util.StringUtils;
 @Component
 public class EvidenceAgentCritic implements AgentCritic {
     @Override
-    public Critique review(Request request, Plan plan, List<StepResult> results, int replans) {
-        for (StepResult result : results) {
-            if (isRetrieval(result.tool()) && result.evidence().isEmpty()) {
-                return retryOrFail(request, replans, "检索子问题缺少证据：" + result.stepId());
-            }
-        }
-        List<Evidence> evidence = results.stream().flatMap(value -> value.evidence().stream()).toList();
-        if (evidence.isEmpty()) {
-            return retryOrFail(request, replans, "当前计划没有取得可引用证据");
-        }
-        Long videoKnowledgeBaseId = request.knowledgeBaseIds().isEmpty()
-                ? null : request.knowledgeBaseIds().get(0);
+    public Critique review(Request request, Plan plan, List<StepResult> results, int replans,
+                           long timeoutMillis) {
         Map<String, Evidence> byId = new HashMap<>();
-        for (Evidence value : evidence) {
-            if (!complete(value) || videoKnowledgeBaseId != null
-                    && videoKnowledgeBaseId.equals(value.knowledgeBaseId()) && !validTime(value)) {
-                return retryOrFail(request, replans, "Evidence 来源字段或视频时间范围不完整");
+        for (Evidence value : results.stream().flatMap(result -> result.evidence().stream()).toList()) {
+            if (!complete(value) || isVideo(request, value) && !validTime(value)) {
+                return new Critique(Verdict.FAIL, "EVIDENCE_FIELDS_INVALID",
+                        "证据来源字段或视频时间范围不完整", null, List.of(), List.of());
             }
             Evidence previous = byId.putIfAbsent(value.evidenceId(), value);
             if (previous != null && conflicts(previous, value)) {
-                return retryOrFail(request, replans, "同一 Evidence ID 出现明显冲突");
+                return new Critique(Verdict.FAIL, "EVIDENCE_ID_CONFLICT",
+                        "同一证据 ID 出现冲突内容", null, List.of(), List.of());
             }
         }
-        return new Critique(Verdict.ACCEPT, "子问题均有完整、可引用且无明显冲突的证据");
+        return new Critique(Verdict.ACCEPT, "EVIDENCE_STRUCTURE_VALID",
+                "候选证据结构校验通过", null, List.of(), List.of());
     }
 
-    private Critique retryOrFail(Request request, int replans, String reason) {
-        return replans < request.maxReplans() ? new Critique(Verdict.REPLAN, reason + "，需要改写查询")
-                : new Critique(Verdict.FAIL, reason + "，已达到重规划上限");
+    private boolean isVideo(Request request, Evidence value) {
+        return request.scope().videoKnowledgeBaseId() != null
+                && request.scope().videoKnowledgeBaseId().equals(value.knowledgeBaseId());
     }
 
     private boolean complete(Evidence value) {
@@ -65,9 +57,5 @@ public class EvidenceAgentCritic implements AgentCritic {
                 || !java.util.Objects.equals(first.content(), second.content())
                 || !java.util.Objects.equals(first.startMs(), second.startMs())
                 || !java.util.Objects.equals(first.endMs(), second.endMs());
-    }
-
-    private boolean isRetrieval(String tool) {
-        return tool != null && tool.endsWith("RETRIEVAL");
     }
 }

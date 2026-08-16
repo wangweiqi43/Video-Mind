@@ -18,6 +18,7 @@ import com.videomind.module.agent.audit.WorkflowAuditService;
 import com.videomind.module.agent.workflow.AgentWorkflowModels;
 import com.videomind.module.agent.workflow.PlannerExecutorCriticWorkflow;
 import com.videomind.module.chat.dto.ChatMessageRequest;
+import com.videomind.module.chat.dto.ChatFeedbackResponse;
 import com.videomind.module.chat.dto.ConversationContext;
 import com.videomind.module.chat.entity.ChatMessage;
 import com.videomind.module.chat.entity.ChatSession;
@@ -27,6 +28,7 @@ import com.videomind.module.chat.mapper.ChatMessageMapper;
 import com.videomind.module.chat.mapper.ChatSessionMapper;
 import com.videomind.module.chat.service.ConversationContextService;
 import com.videomind.module.chat.service.ConversationSummaryService;
+import com.videomind.module.chat.service.ChatFeedbackService;
 import com.videomind.module.chat.support.ConversationTurnAssembler;
 import com.videomind.module.knowledge.retrieval.Evidence;
 import com.videomind.module.knowledge.service.KnowledgeBaseService;
@@ -34,6 +36,7 @@ import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,10 +54,12 @@ class ChatServiceLocalWorkflowTest {
     private final PlannerExecutorCriticWorkflow workflow = mock(PlannerExecutorCriticWorkflow.class);
     private final WorkflowAuditService workflowAudits = mock(WorkflowAuditService.class);
     private final WorkflowAuditService.Session audit = mock(WorkflowAuditService.Session.class);
+    private final ChatFeedbackService feedback = mock(ChatFeedbackService.class);
     private final ChatGenerationCancellationRegistry generationCancellations =
             new ChatGenerationCancellationRegistry();
     private final ChatServiceImpl service = new ChatServiceImpl(sessions, messages, answers, contexts, summaries,
-            turns, new ObjectMapper(), videos, knowledgeBases, workflow, workflowAudits, generationCancellations);
+            turns, new ObjectMapper(), videos, knowledgeBases, workflow, workflowAudits,
+            generationCancellations, feedback);
 
     @BeforeEach
     void setUp() {
@@ -114,8 +119,9 @@ class ChatServiceLocalWorkflowTest {
                 ArgumentCaptor.forClass(AgentWorkflowModels.Request.class);
         verify(workflow).run(workflowRequest.capture());
         assertThat(workflowRequest.getValue().knowledgeBaseIds()).containsExactly(10L, 20L);
-        assertThat(workflowRequest.getValue().mode()).isEqualTo(AgentWorkflowModels.Mode.STANDARD);
-        assertThat(workflowRequest.getValue().maxToolCalls()).isEqualTo(2);
+        assertThat(workflowRequest.getValue().scope().videoKnowledgeBaseId()).isEqualTo(10L);
+        assertThat(workflowRequest.getValue().scope().documentKnowledgeBaseIds()).containsExactly(20L);
+        assertThat(workflowRequest.getValue().maxToolCalls()).isEqualTo(6);
         assertThat(workflowRequest.getValue().observer()).isSameAs(audit);
         verify(audit).workflowFinished(any());
         verify(audit).answerCompleted("使用状态机和 CAS Lease");
@@ -132,6 +138,50 @@ class ChatServiceLocalWorkflowTest {
         ArgumentCaptor<LambdaQueryWrapper<ChatSession>> query = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
         verify(sessions).selectList(query.capture());
         assertThat(query.getValue().getSqlSegment()).contains("user_id", "video_id").doesNotContain("application_mode");
+    }
+
+    @Test
+    void outOfScopeQuestionGetsDeterministicRefusalWithoutAnswerModelOrReferences() {
+        ChatSession session = session();
+        when(sessions.selectOne(any())).thenReturn(session);
+        when(contexts.getContext(13L, 99L, List.of(10L, 20L)))
+                .thenReturn(ConversationContext.builder().conversationId(13L).recentTurns(List.of()).build());
+        when(workflow.run(any())).thenReturn(new AgentWorkflowModels.Result(
+                AgentWorkflowModels.Status.OUT_OF_SCOPE, null, List.of(), List.of(), 0, 0, "outside"));
+        ChatMessageRequest request = new ChatMessageRequest();
+        request.setSessionId(13L);
+        request.setVideoId(7L);
+        request.setQuestion("明天北京天气如何");
+
+        var response = service.sendMessage(request, 99L);
+
+        assertThat(response.getAnswer()).contains("超出当前视频和所选知识库");
+        assertThat(response.getReferences()).isEmpty();
+        assertThat(response.getGenerationId()).isEqualTo(61L);
+        verify(answers, never()).answer(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void restoresMessageFeedbackWithConversationHistory() {
+        when(sessions.selectOne(any())).thenReturn(session());
+        ChatMessage assistant = new ChatMessage();
+        assistant.setId(31L);
+        assistant.setSessionId(13L);
+        assistant.setUserId(99L);
+        assistant.setGenerationId(61L);
+        assistant.setRole(MessageRole.ASSISTANT);
+        assistant.setContent("回答");
+        when(messages.selectList(any())).thenReturn(List.of(assistant));
+        ChatFeedbackResponse saved = ChatFeedbackResponse.builder().messageId(31L).rating("UP")
+                .reasonCodes(List.of()).build();
+        when(feedback.findBySession(13L, 99L)).thenReturn(Map.of(31L, saved));
+
+        var result = service.listMessages(13L, 7L, 99L);
+
+        assertThat(result).singleElement().satisfies(message -> {
+            assertThat(message.getGenerationId()).isEqualTo(61L);
+            assertThat(message.getFeedback().getRating()).isEqualTo("UP");
+        });
     }
 
     @Test

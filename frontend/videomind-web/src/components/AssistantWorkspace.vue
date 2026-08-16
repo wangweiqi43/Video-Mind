@@ -15,11 +15,24 @@ const props = defineProps({
 })
 const emit = defineEmits([
   'show-history', 'new-session', 'return-chat', 'back-history', 'open-session', 'reload-sessions', 'history-scroll', 'update:question',
-  'update:answer-scope', 'update:selected-knowledge-base-ids', 'refresh-knowledge', 'send', 'open-reference'
+  'update:answer-scope', 'update:selected-knowledge-base-ids', 'refresh-knowledge', 'send', 'open-reference',
+  'submit-feedback', 'delete-feedback'
 ])
 
 const historyList = ref(null)
 const scopeOpen = ref(false)
+const feedbackOpen = ref(false)
+const feedbackTarget = ref(null)
+const feedbackReasons = ref([])
+const feedbackDetail = ref('')
+const feedbackOptions = [
+  ['SEMANTIC_DRIFT', '偏离查询语义'],
+  ['KNOWLEDGE_GROUNDING_ERROR', '未精确依据知识库内容'],
+  ['MISSING_KEY_POINTS', '遗漏关键信息'],
+  ['IRRELEVANT_REFERENCE', '参考来源不相关'],
+  ['ANSWER_INCOMPLETE', '回答不完整'],
+  ['OTHER', '其他']
+]
 const questionModel = computed({ get: () => props.question, set: (value) => emit('update:question', value) })
 const answerScopeModel = computed({ get: () => props.answerScope, set: (value) => emit('update:answer-scope', value) })
 const knowledgeModel = computed({ get: () => props.selectedKnowledgeBaseIds, set: (value) => emit('update:selected-knowledge-base-ids', value) })
@@ -47,6 +60,39 @@ function onComposerKeydown(event) {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
   event.preventDefault()
   if (canSend.value) emit('send')
+}
+
+function canFeedback(message) {
+  return message?.role === 'ASSISTANT' && Boolean(message.id) && Boolean(message.generationId)
+    && !message.streaming && !message.failed
+}
+
+function toggleUp(message) {
+  if (message.feedback?.rating === 'UP') return emit('delete-feedback', message)
+  emit('submit-feedback', { message, rating: 'UP', reasonCodes: [], detail: '' })
+}
+
+function openDown(message) {
+  feedbackTarget.value = message
+  feedbackReasons.value = message.feedback?.rating === 'DOWN' ? [...(message.feedback.reasonCodes || [])] : []
+  feedbackDetail.value = message.feedback?.rating === 'DOWN' ? (message.feedback.detail || '') : ''
+  feedbackOpen.value = true
+}
+
+function submitDown() {
+  if (!feedbackReasons.value.length || !feedbackTarget.value) return
+  emit('submit-feedback', {
+    message: feedbackTarget.value,
+    rating: 'DOWN',
+    reasonCodes: feedbackReasons.value,
+    detail: feedbackDetail.value.trim()
+  })
+  feedbackOpen.value = false
+}
+
+function clearDown() {
+  if (feedbackTarget.value?.feedback?.rating === 'DOWN') emit('delete-feedback', feedbackTarget.value)
+  feedbackOpen.value = false
 }
 </script>
 
@@ -101,6 +147,17 @@ function onComposerKeydown(event) {
                 <svg viewBox="0 0 24 24"><path d="M14 5h5v5m0-5-8 8M19 13v6H5V5h6"/></svg>
               </button>
             </div>
+            <div v-if="canFeedback(message)" class="message-feedback" aria-label="回答反馈">
+              <button type="button" :class="{ active: message.feedback?.rating === 'UP' }"
+                :disabled="message.feedbackSubmitting" aria-label="赞" title="赞" @click="toggleUp(message)">
+                <svg viewBox="0 0 24 24"><path d="M7 10v10H4V10h3Zm3 10h7.2a2 2 0 0 0 1.9-1.4l1.6-5A2 2 0 0 0 18.8 11H15l.6-3.1A2.4 2.4 0 0 0 13.2 5L10 10v10Z"/></svg>
+              </button>
+              <button type="button" :class="{ active: message.feedback?.rating === 'DOWN' }"
+                :disabled="message.feedbackSubmitting" aria-label="踩" title="踩" @click="openDown(message)">
+                <svg viewBox="0 0 24 24"><path d="M7 14V4H4v10h3Zm3-10h7.2a2 2 0 0 1 1.9 1.4l1.6 5a2 2 0 0 1-1.9 2.6H15l.6 3.1a2.4 2.4 0 0 1-2.4 2.9L10 14V4Z"/></svg>
+              </button>
+              <span v-if="message.feedback">已记录反馈</span>
+            </div>
           </article>
         </div>
       </section>
@@ -140,5 +197,17 @@ function onComposerKeydown(event) {
         </div>
       </footer>
     </template>
+    <el-dialog v-model="feedbackOpen" title="这次回答哪里需要改进？" width="420px" append-to-body>
+      <el-checkbox-group v-model="feedbackReasons" class="feedback-reason-list">
+        <el-checkbox v-for="option in feedbackOptions" :key="option[0]" :value="option[0]">{{ option[1] }}</el-checkbox>
+      </el-checkbox-group>
+      <el-input v-model="feedbackDetail" type="textarea" :rows="3" maxlength="500" show-word-limit
+        placeholder="可选：补充具体原因" />
+      <template #footer>
+        <button v-if="feedbackTarget?.feedback?.rating === 'DOWN'" class="feedback-clear" type="button" @click="clearDown">取消反馈</button>
+        <el-button @click="feedbackOpen = false">取消</el-button>
+        <el-button type="primary" :disabled="!feedbackReasons.length" @click="submitDown">提交反馈</el-button>
+      </template>
+    </el-dialog>
   </aside>
 </template>

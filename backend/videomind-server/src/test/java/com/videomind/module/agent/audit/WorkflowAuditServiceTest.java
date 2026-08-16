@@ -22,8 +22,7 @@ class WorkflowAuditServiceTest {
         doThrow(new IllegalStateException("db unavailable")).when(repository).record(71L, 0, event);
         List<WorkflowEvent> forwarded = new ArrayList<>();
         WorkflowAuditService service = new WorkflowAuditService(repository);
-        var request = new AgentWorkflowModels.Request(9L, 13L, List.of(10L), "q",
-                AgentWorkflowModels.Mode.STANDARD);
+        var request = new AgentWorkflowModels.Request(9L, 13L, List.of(10L), "q");
 
         WorkflowAuditService.Session session = service.start(request, forwarded::add);
         session.onEvent(event);

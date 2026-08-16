@@ -149,13 +149,15 @@ export function useChatWorkspace({ client, selectedVideo, knowledge }) {
         answerScope.value,
         (delta) => { assistant.content += delta },
         false,
-        false,
         (workflow) => { assistant.workflowStatus = workflow.message }
       )
       const answer = await activeStream
       if (!assistant.content && answer?.answer) assistant.content = answer.answer
       assistant.referencesJson = answer?.referencesJson || ''
       assistant.references = answer?.references || []
+      assistant.id = answer?.messageId
+      assistant.generationId = answer?.generationId
+      assistant.feedback = answer?.feedback || null
       assistant.workflowStatus = ''
       assistant.streaming = false
       await loadSessions(selectedVideo.value.id)
@@ -179,12 +181,47 @@ export function useChatWorkspace({ client, selectedVideo, knowledge }) {
     window.open(`/api/videos/${videoId}/stream${timestamp}`, '_blank', 'noopener')
   }
 
+  async function submitFeedback({ message, rating, reasonCodes = [], detail = '' }) {
+    if (!message?.id || message.feedbackSubmitting) return false
+    const previous = message.feedback
+    message.feedbackSubmitting = true
+    try {
+      message.feedback = await client.saveMessageFeedback(message.id, { rating, reasonCodes, detail })
+      ElMessage.success('感谢反馈')
+      return true
+    } catch (error) {
+      message.feedback = previous
+      ElMessage.error(error.message || '反馈提交失败')
+      return false
+    } finally {
+      message.feedbackSubmitting = false
+    }
+  }
+
+  async function deleteFeedback(message) {
+    if (!message?.id || message.feedbackSubmitting) return false
+    const previous = message.feedback
+    message.feedbackSubmitting = true
+    try {
+      await client.deleteMessageFeedback(message.id)
+      message.feedback = null
+      return true
+    } catch (error) {
+      message.feedback = previous
+      ElMessage.error(error.message || '取消反馈失败')
+      return false
+    } finally {
+      message.feedbackSubmitting = false
+    }
+  }
+
   onBeforeUnmount(() => activeStream?.cancel?.())
 
   return {
     sessions, messages, chatView, sessionListLoading, sessionListError, sessionDetailLoading,
     activeSessionId, question, answerScope, loadingChat, historyScrollTop, resetForVideo,
     loadSessions, createSession, prepareNewSession, openSession, openRestoredSession,
-    showHistory, returnToChat, backToHistory, sendQuestion, openReference, normalizeReferences
+    showHistory, returnToChat, backToHistory, sendQuestion, openReference, submitFeedback, deleteFeedback,
+    normalizeReferences
   }
 }

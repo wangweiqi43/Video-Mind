@@ -92,6 +92,27 @@ test('restores local knowledge history with evidence as completed content', () =
   assert.match(renderSafeMarkdown(messages[0].content), /<h3>核心结论<\/h3>/)
 })
 
+test('restores the persisted PEC generation and answer feedback', () => {
+  const messages = normalizeHistoryMessages([{
+    id: 31,
+    generationId: 61,
+    role: 'ASSISTANT',
+    content: '已验证回答',
+    feedback: {
+      messageId: 31,
+      rating: 'DOWN',
+      reasonCodes: ['IRRELEVANT_REFERENCE'],
+      detail: '引用与问题无关'
+    }
+  }])
+
+  assert.equal(messages[0].id, 31)
+  assert.equal(messages[0].generationId, 61)
+  assert.equal(messages[0].feedback.rating, 'DOWN')
+  assert.deepEqual(messages[0].feedback.reasonCodes, ['IRRELEVANT_REFERENCE'])
+  assert.equal(messages[0].feedbackSubmitting, false)
+})
+
 test('uses safe fallbacks for incomplete local session metadata', () => {
   assert.equal(sessionTitle({ title: ' 旧会话 ' }), '旧会话')
   assert.equal(sessionTitle({}), '新会话')

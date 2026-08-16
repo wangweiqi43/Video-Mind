@@ -28,13 +28,14 @@ class WorkflowAuditRepositoryTest {
             return 1;
         }).when(executions).insert(any(AgentExecution.class));
         var request = new AgentWorkflowModels.Request(9L, 13L, List.of(10L, 20L),
-                "如何保证消费幂等", AgentWorkflowModels.Mode.DEEP);
+                "如何保证消费幂等");
 
         WorkflowAuditRepository.StartedAudit started = repository.start(61L, request);
         repository.record(started.executionId(), 0, new WorkflowEvent("TOOL", 2, "s1",
                 "VIDEO_TIMELINE_RETRIEVAL", "COMPLETED", "工具调用完成", 37L, List.of("ev-1")));
         var result = new AgentWorkflowModels.Result(AgentWorkflowModels.Status.COMPLETED,
-                new AgentWorkflowModels.Plan("VIDEO_TIMELINE", List.of(), 2), List.of(), List.of(), 1, 2, "ok");
+                new AgentWorkflowModels.Plan(AgentWorkflowModels.Route.VIDEO_RAG, List.of(), 1),
+                List.of(), List.of(), 1, 2, "ok");
         repository.finishExecution(started.executionId(), result);
         repository.completeGeneration(started.generationId(), "答案");
 
@@ -56,8 +57,12 @@ class WorkflowAuditRepositoryTest {
         ArgumentCaptor<AgentExecution> executionUpdates = ArgumentCaptor.forClass(AgentExecution.class);
         verify(executions).updateById(executionUpdates.capture());
         assertThat(executionUpdates.getValue().getState()).isEqualTo("COMPLETED");
-        assertThat(executionUpdates.getValue().getRoute()).isEqualTo("VIDEO_TIMELINE");
+        assertThat(executionUpdates.getValue().getRoute()).isEqualTo("VIDEO_RAG");
         assertThat(executionUpdates.getValue().getToolCalls()).isEqualTo(2);
+
+        ArgumentCaptor<AgentExecution> executionInsert = ArgumentCaptor.forClass(AgentExecution.class);
+        verify(executions).insert(executionInsert.capture());
+        assertThat(executionInsert.getValue().getProfile()).isEqualTo("PEC_BOUNDED");
 
         verify(generations).markSuccess(eq(61L), eq("答案"), any());
     }

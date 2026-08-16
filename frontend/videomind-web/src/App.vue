@@ -97,6 +97,7 @@ async function createKnowledge(payload) {
         @update:answer-scope="chat.answerScope.value = $event" @update:selected-knowledge-base-ids="knowledge.selectedIds.value = $event"
         @refresh-knowledge="knowledge.load"
         @send="chat.sendQuestion" @open-reference="chat.openReference"
+        @submit-feedback="chat.submitFeedback" @delete-feedback="chat.deleteFeedback"
       />
     </section>
     <KnowledgeCreateDialog v-model="knowledgeCreateVisible" :submitting="knowledge.creating.value"
