@@ -178,3 +178,11 @@ videomind:
       api-key: "${CHAT_API_KEY:${SILICONFLOW_API_KEY:}}"
       model: ${CHAT_MODEL:deepseek-ai/DeepSeek-V4-Flash}
       timeout-seconds: ${CHAT_TIMEOUT_SECONDS:120}
+    vision:
+      mode: ${VIDEOMIND_VISION_MODE:real}
+      endpoint: ${VISION_API_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}/chat/completions
+      api-key: "${VISION_API_KEY:${DASHSCOPE_API_KEY:}}"
+      model: ${VISION_MODEL:qwen3-vl-plus}
+      timeout-seconds: ${VISION_TIMEOUT_SECONDS:90}
+      concurrency: ${VISION_CONCURRENCY:3}
+      max-attempts: ${VISION_MAX_ATTEMPTS:2}

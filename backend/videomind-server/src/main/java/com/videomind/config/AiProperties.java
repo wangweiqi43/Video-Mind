@@ -13,6 +13,7 @@ public class AiProperties {
     private EmbeddingProvider embedding = new EmbeddingProvider();
     private ApiProvider rerank = new ApiProvider();
     private ApiProvider chat = new ApiProvider();
+    private VisionProvider vision = new VisionProvider();
 
     @Data
     public static class ApiProvider {
@@ -34,5 +35,12 @@ public class AiProperties {
     public static class EmbeddingProvider extends ApiProvider {
 
         private Integer dimension = 64;
+    }
+
+    @Data
+    @EqualsAndHashCode(callSuper = true)
+    public static class VisionProvider extends ApiProvider {
+        private Integer concurrency = 3;
+        private Integer maxAttempts = 2;
     }
 }

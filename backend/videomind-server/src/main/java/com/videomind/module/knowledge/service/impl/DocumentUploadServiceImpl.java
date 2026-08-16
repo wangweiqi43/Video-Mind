@@ -8,15 +8,21 @@ import com.videomind.infrastructure.storage.ObjectStorageService;
 import com.videomind.infrastructure.storage.dto.StoredObject;
 import com.videomind.module.knowledge.dto.DocumentUploadResponse;
 import com.videomind.module.knowledge.entity.DocumentVersion;
+import com.videomind.module.knowledge.entity.DocumentUploadIdempotency;
 import com.videomind.module.knowledge.entity.KnowledgeBase;
 import com.videomind.module.knowledge.entity.KnowledgeDocument;
 import com.videomind.module.knowledge.ingest.DocumentFileValidator;
 import com.videomind.module.knowledge.mapper.DocumentVersionMapper;
+import com.videomind.module.knowledge.mapper.DocumentUploadIdempotencyMapper;
 import com.videomind.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.videomind.module.knowledge.mapper.KnowledgeDocumentMapper;
 import com.videomind.module.knowledge.service.DocumentUploadService;
-import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
@@ -37,21 +43,39 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeDocumentMapper documentMapper;
     private final DocumentVersionMapper versionMapper;
+    private final DocumentUploadIdempotencyMapper idempotencyMapper;
     private final ObjectStorageService storage;
     private final DocumentFileValidator validator;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public DocumentUploadResponse upload(Long userId, Long knowledgeBaseId, MultipartFile file) {
+    public DocumentUploadResponse upload(Long userId, Long knowledgeBaseId, MultipartFile file,
+                                         String idempotencyKey) {
         KnowledgeBase knowledgeBase = requireWritableUserBase(userId, knowledgeBaseId);
-        byte[] bytes = read(file);
         String filename = normalizeFilename(file.getOriginalFilename());
-        String contentType = validator.validateAndContentType(filename, bytes);
-        String sha256 = sha256(bytes);
+        validateIdempotencyKey(idempotencyKey);
+        Path staged = stage(file);
+        try {
+        long fileSize = Files.size(staged);
+        String contentType = validator.validateAndContentType(filename, staged);
+        String sha256 = sha256(staged);
+        String requestFingerprint = sha256(userId + "|" + knowledgeBaseId + "|"
+                + filename + "|" + fileSize + "|" + sha256);
+        DocumentUploadIdempotency previous = findIdempotency(userId, knowledgeBaseId, idempotencyKey);
+        if (previous != null) {
+            if (!requestFingerprint.equals(previous.getRequestFingerprint())) {
+                throw new BizException(409, "IDEMPOTENCY_CONFLICT");
+            }
+            KnowledgeDocument priorDocument = documentMapper.selectById(previous.getDocumentId());
+            DocumentVersion priorVersion = versionMapper.selectById(previous.getDocumentVersionId());
+            return response(priorDocument, priorVersion, true, previous.getProcessingTaskId());
+        }
         KnowledgeDocument duplicate = findDuplicate(userId, knowledgeBaseId, sha256);
         if (duplicate != null) {
             DocumentVersion version = latestVersion(duplicate.getId());
-            return response(duplicate, version, true);
+            saveIdempotency(userId, knowledgeBaseId, idempotencyKey, requestFingerprint,
+                    duplicate.getId(), version.getId());
+            return response(duplicate, version, true, null);
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -70,7 +94,10 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
         documentMapper.insert(document);
 
         String objectKey = objectKey(userId, knowledgeBaseId, document.getId(), filename);
-        StoredObject stored = storage.putObject(objectKey, new ByteArrayInputStream(bytes), bytes.length, contentType);
+        StoredObject stored;
+        try (InputStream input = Files.newInputStream(staged)) {
+            stored = storage.putObject(objectKey, input, fileSize, contentType);
+        }
         removeStoredObjectAfterRollback(stored);
 
         DocumentVersion version = new DocumentVersion();
@@ -78,9 +105,12 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
         version.setVersionNumber(1);
         version.setOriginalBucket(stored.getBucket());
         version.setOriginalObjectKey(stored.getObjectKey());
-        version.setOriginalFileSize((long) bytes.length);
+        version.setOriginalFileSize(fileSize);
         version.setOriginalContentType(contentType);
         version.setProcessingStage(validator.mineruRequired(filename) ? "MINERU_QUEUED" : "READ_PARSE");
+        version.setVisualStatus("NOT_APPLICABLE");
+        version.setImageCount(0);
+        version.setDescribedImageCount(0);
         version.setIndexStatus("PENDING");
         version.setChunkCount(0);
         version.setCreatedTime(now);
@@ -95,7 +125,16 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
             knowledgeBase.setUpdatedTime(now);
             knowledgeBaseMapper.updateById(knowledgeBase);
         }
-        return response(document, version, false);
+        saveIdempotency(userId, knowledgeBaseId, idempotencyKey, requestFingerprint,
+                document.getId(), version.getId());
+        return response(document, version, false, null);
+        } catch (BizException known) {
+            throw known;
+        } catch (Exception failure) {
+            throw new BizException(500, "登记知识库文件失败：" + failure.getMessage());
+        } finally {
+            try { Files.deleteIfExists(staged); } catch (Exception ignored) { }
+        }
     }
 
     private KnowledgeBase requireWritableUserBase(Long userId, Long knowledgeBaseId) {
@@ -132,7 +171,7 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
                 .last("LIMIT 1"));
     }
 
-    private static byte[] read(MultipartFile file) {
+    private static Path stage(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BizException(400, "不能上传空文件");
         }
@@ -140,11 +179,26 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
             throw new BizException(413, "文件不能超过 50MB");
         }
         try {
-            byte[] bytes = file.getBytes();
-            if (bytes.length == 0) {
+            Path directory = Path.of("runtime", "document-upload");
+            Files.createDirectories(directory);
+            Path target = Files.createTempFile(directory, "upload-", ".part");
+            long copied = 0;
+            byte[] buffer = new byte[64 * 1024];
+            try (InputStream input = file.getInputStream();
+                 OutputStream output = Files.newOutputStream(target, StandardOpenOption.TRUNCATE_EXISTING)) {
+                int read;
+                while ((read = input.read(buffer)) >= 0) {
+                    copied += read;
+                    if (copied > MAX_FILE_BYTES) {
+                        throw new BizException(413, "文件不能超过 50MB");
+                    }
+                    output.write(buffer, 0, read);
+                }
+            }
+            if (copied == 0) {
                 throw new BizException(400, "不能上传空文件");
             }
-            return bytes;
+            return target;
         } catch (BizException known) {
             throw known;
         } catch (Exception failure) {
@@ -167,15 +221,61 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
             safe = "document";
         }
         return "knowledge/" + userId + "/" + knowledgeBaseId + "/" + documentId
-                + "/v1/original/" + UUID.randomUUID() + "-" + safe;
+                + "/v1/original/" + safe;
     }
 
-    private static String sha256(byte[] bytes) {
+    private static String sha256(Path path) {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream input = Files.newInputStream(path)) {
+                byte[] buffer = new byte[64 * 1024];
+                int read;
+                while ((read = input.read(buffer)) >= 0) digest.update(buffer, 0, read);
+            }
+            return HexFormat.of().formatHex(digest.digest());
         } catch (Exception impossible) {
             throw new IllegalStateException("SHA-256 is unavailable", impossible);
         }
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private void validateIdempotencyKey(String value) {
+        if (!StringUtils.hasText(value) || value.length() > 200) {
+            throw new BizException(400, "Idempotency-Key 必须是有效 UUID");
+        }
+        try { UUID.fromString(value); } catch (Exception invalid) {
+            throw new BizException(400, "Idempotency-Key 必须是有效 UUID");
+        }
+    }
+
+    private DocumentUploadIdempotency findIdempotency(Long userId, Long knowledgeBaseId, String key) {
+        return idempotencyMapper.selectOne(Wrappers.<DocumentUploadIdempotency>lambdaQuery()
+                .eq(DocumentUploadIdempotency::getUserId, userId)
+                .eq(DocumentUploadIdempotency::getKnowledgeBaseId, knowledgeBaseId)
+                .eq(DocumentUploadIdempotency::getIdempotencyKey, key).last("LIMIT 1"));
+    }
+
+    private void saveIdempotency(Long userId, Long knowledgeBaseId, String key, String fingerprint,
+                                 Long documentId, Long versionId) {
+        DocumentUploadIdempotency value = new DocumentUploadIdempotency();
+        LocalDateTime now = LocalDateTime.now();
+        value.setUserId(userId);
+        value.setKnowledgeBaseId(knowledgeBaseId);
+        value.setIdempotencyKey(key);
+        value.setRequestFingerprint(fingerprint);
+        value.setDocumentId(documentId);
+        value.setDocumentVersionId(versionId);
+        value.setCreatedTime(now);
+        value.setUpdatedTime(now);
+        idempotencyMapper.insert(value);
     }
 
     private void removeStoredObjectAfterRollback(StoredObject stored) {
@@ -193,9 +293,10 @@ public class DocumentUploadServiceImpl implements DocumentUploadService {
     }
 
     private static DocumentUploadResponse response(KnowledgeDocument document, DocumentVersion version,
-                                                   boolean duplicated) {
+                                                   boolean duplicated, Long processingTaskId) {
         return new DocumentUploadResponse(document.getId(), version == null ? null : version.getId(),
                 document.getTitle(), document.getSha256(), document.getStatus(),
-                version == null ? null : version.getProcessingStage(), duplicated, null, null, false);
+                version == null ? null : version.getProcessingStage(), duplicated, null,
+                processingTaskId, processingTaskId != null);
     }
 }

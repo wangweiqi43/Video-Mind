@@ -11,6 +11,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -57,13 +59,19 @@ public class MineruClient {
     }
 
     public ParseResult parse(byte[] bytes, String filename, String resumeTaskId, ParseObserver observer) {
+        return parse(bytes, filename, resumeTaskId, observer, null);
+    }
+
+    public ParseResult parse(byte[] bytes, String filename, String resumeTaskId, ParseObserver observer,
+                             Path workspace) {
         boolean acquired = false;
         try {
             acquired = localSlots.tryAcquire(timeoutSeconds, TimeUnit.SECONDS);
             if (!acquired) {
                 throw new MineruException("MINERU_LOCAL_BUSY", true, null);
             }
-            return parseLocal(bytes, filename, resumeTaskId, observer == null ? ParseObserver.NOOP : observer);
+            return parseLocal(bytes, filename, resumeTaskId, observer == null ? ParseObserver.NOOP : observer,
+                    workspace);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new MineruException("MINERU_INTERRUPTED", true, interrupted);
@@ -79,7 +87,7 @@ public class MineruClient {
     }
 
     private ParseResult parseLocal(byte[] bytes, String filename, String resumeTaskId,
-                                   ParseObserver observer) throws Exception {
+                                   ParseObserver observer, Path workspace) throws Exception {
         String taskId = resumeTaskId;
         JsonNode resumeStatus = null;
         if (taskId != null && !taskId.isBlank()) {
@@ -114,7 +122,7 @@ public class MineruClient {
                 throw new MineruException("MINERU_LOCAL_FAILED", true, null);
             }
             if ("completed".equalsIgnoreCase(state)) {
-                return withTask(result(taskId), taskId);
+                return withTask(result(taskId, workspace), taskId);
             }
             Thread.sleep(500);
         }
@@ -161,7 +169,7 @@ public class MineruClient {
         return mapper.readTree(response.body());
     }
 
-    private ParseResult result(String taskId) throws Exception {
+    private ParseResult result(String taskId, Path workspace) throws Exception {
         HttpResponse<byte[]> response = http.send(HttpRequest.newBuilder(
                         URI.create(localBaseUrl + "/tasks/" + taskId + "/result"))
                         .timeout(Duration.ofSeconds(60)).GET().build(),
@@ -171,6 +179,12 @@ public class MineruClient {
         }
         String type = response.headers().firstValue("Content-Type").orElse("");
         if (type.contains("zip") || isZip(response.body())) {
+            if (workspace != null) {
+                Files.createDirectories(workspace);
+                Path zip = workspace.resolve("mineru-result.zip");
+                Files.write(zip, response.body());
+                return parseZip(zip, "MINERU_LOCAL");
+            }
             return parseZip(response.body(), "MINERU_LOCAL");
         }
         JsonNode json = mapper.readTree(response.body());
@@ -182,10 +196,20 @@ public class MineruClient {
     }
 
     static ParseResult parseZip(byte[] zip, String provider) throws IOException {
+        return parseZip(new ByteArrayInputStream(zip), provider);
+    }
+
+    static ParseResult parseZip(Path zip, String provider) throws IOException {
+        try (var input = Files.newInputStream(zip)) {
+            return parseZip(input, provider);
+        }
+    }
+
+    private static ParseResult parseZip(java.io.InputStream zip, String provider) throws IOException {
         Map<String, byte[]> files = new LinkedHashMap<>();
         long total = 0;
         int entries = 0;
-        try (ZipInputStream input = new ZipInputStream(new ByteArrayInputStream(zip), StandardCharsets.UTF_8)) {
+        try (ZipInputStream input = new ZipInputStream(zip, StandardCharsets.UTF_8)) {
             ZipEntry entry;
             while ((entry = input.getNextEntry()) != null) {
                 if (entry.isDirectory()) {

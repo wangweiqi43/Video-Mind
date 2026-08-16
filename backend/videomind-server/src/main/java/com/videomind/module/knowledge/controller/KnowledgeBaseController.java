@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -50,9 +51,10 @@ public class KnowledgeBaseController {
 
     @PostMapping(value = "/{knowledgeBaseId}/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResponse<DocumentUploadResponse> upload(@PathVariable Long knowledgeBaseId,
+                                                       @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                        @RequestPart("file") MultipartFile file) {
         return ApiResponse.success(documentApplicationService.uploadAndDispatch(
-                MockUserContext.currentUserId(), knowledgeBaseId, file));
+                MockUserContext.currentUserId(), knowledgeBaseId, file, idempotencyKey));
     }
 
     @DeleteMapping("/{knowledgeBaseId}")

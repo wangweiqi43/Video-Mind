@@ -74,7 +74,7 @@ class TaskRecordServiceImplTest {
         assertThat(command.getValue().businessFingerprint())
                 .startsWith("VIDEO_ANALYSIS:7:5:").hasSize(83);
         assertThat(command.getValue().payload()).containsEntry("videoMd5", "video-md5")
-                .containsEntry("timelineVersion", "timeline-fusion-v1");
+                .containsEntry("timelineVersion", "timeline-fusion-v3-layered-ocr-anchor");
     }
 
     @Test

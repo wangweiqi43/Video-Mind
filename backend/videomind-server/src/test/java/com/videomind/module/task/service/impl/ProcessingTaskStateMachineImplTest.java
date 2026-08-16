@@ -28,13 +28,27 @@ class ProcessingTaskStateMachineImplTest {
         task.setLeaseOwner("dead-worker");
         task.setLeaseExpiresAt(LocalDateTime.now().minusMinutes(1));
         when(mapper.selectById(9L)).thenReturn(task);
-        when(mapper.acquireLease(eq(9L), eq(4L), eq("worker-2"), eq("PARSE"), any(), any()))
+        when(mapper.acquireLease(eq(9L), eq(4L), eq("worker-2"), eq("START"), any(), any()))
                 .thenReturn(1);
 
         var result = service.acquire(9L, "worker-2", "PARSE", Duration.ofMinutes(2));
 
         assertThat(result.status()).isEqualTo(LeaseStatus.ACQUIRED);
         assertThat(result.stateVersion()).isEqualTo(5L);
+    }
+
+    @Test
+    void retryLeasePreservesTheFailedDocumentStage() {
+        ProcessingTask task = task(ProcessingTaskState.RETRY_WAIT, 4L);
+        task.setStage("ENRICH_IMAGES");
+        task.setNextRetryAt(LocalDateTime.now().minusSeconds(1));
+        when(mapper.selectById(9L)).thenReturn(task);
+        when(mapper.acquireLease(eq(9L), eq(4L), eq("worker-2"), eq("ENRICH_IMAGES"), any(), any()))
+                .thenReturn(1);
+
+        var result = service.acquire(9L, "worker-2", "QUEUED", Duration.ofMinutes(2));
+
+        assertThat(result.status()).isEqualTo(LeaseStatus.ACQUIRED);
     }
 
     @Test

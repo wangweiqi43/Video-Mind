@@ -112,6 +112,8 @@ public class PhysicalDeletionRepository {
     }
 
     private void deleteKnowledgeTree(Long userId, Long knowledgeBaseId) {
+        jdbc.update("DELETE FROM document_upload_idempotency WHERE knowledge_base_id=? AND user_id=?",
+                knowledgeBaseId, userId);
         jdbc.update("DELETE a FROM document_asset a JOIN document_version v ON v.id=a.document_version_id "
                 + "JOIN knowledge_document d ON d.id=v.document_id "
                 + "WHERE d.knowledge_base_id=? AND d.user_id=?", knowledgeBaseId, userId);
@@ -132,6 +134,16 @@ public class PhysicalDeletionRepository {
                 """, knowledgeBaseId, userId);
         addRows(target, """
                 SELECT v.markdown_bucket AS bucket, v.markdown_object_key AS object_key
+                FROM document_version v JOIN knowledge_document d ON d.id=v.document_id
+                WHERE d.knowledge_base_id=? AND d.user_id=?
+                """, knowledgeBaseId, userId);
+        addRows(target, """
+                SELECT v.raw_markdown_bucket AS bucket, v.raw_markdown_object_key AS object_key
+                FROM document_version v JOIN knowledge_document d ON d.id=v.document_id
+                WHERE d.knowledge_base_id=? AND d.user_id=?
+                """, knowledgeBaseId, userId);
+        addRows(target, """
+                SELECT v.manifest_bucket AS bucket, v.manifest_object_key AS object_key
                 FROM document_version v JOIN knowledge_document d ON d.id=v.document_id
                 WHERE d.knowledge_base_id=? AND d.user_id=?
                 """, knowledgeBaseId, userId);

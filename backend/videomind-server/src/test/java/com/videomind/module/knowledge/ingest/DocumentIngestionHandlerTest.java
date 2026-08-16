@@ -36,6 +36,7 @@ import com.videomind.module.task.service.ProcessingTaskHandler.TaskExecutionCont
 import com.videomind.module.task.service.TaskCheckpointService;
 import com.videomind.module.task.service.TaskCancellationGuard;
 import com.videomind.module.task.service.TaskCancellationException;
+import com.videomind.module.task.service.ProcessingTaskStateMachine;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -56,13 +57,15 @@ class DocumentIngestionHandlerTest {
     private final KnowledgeIndexGateway index = mock(KnowledgeIndexGateway.class);
     private final TaskCheckpointService checkpoints = mock(TaskCheckpointService.class);
     private final TaskCancellationGuard cancellation = mock(TaskCancellationGuard.class);
+    private final ProcessingTaskStateMachine taskState = mock(ProcessingTaskStateMachine.class);
+    private final DocumentImageEnrichmentService imageEnrichment = mock(DocumentImageEnrichmentService.class);
     private final AiProperties ai = new AiProperties();
     private final List<DocumentChunk> persisted = new ArrayList<>();
     private final KnowledgeDocument document = new KnowledgeDocument();
     private final DocumentVersion version = new DocumentVersion();
     private final DocumentIngestionHandler handler = new DocumentIngestionHandler(documents, versions, bases,
             chunks, assets, storage, new DocumentFileValidator(), mineru, new SemanticChunker(), embeddings,
-            index, checkpoints, ai, new ObjectMapper(), cancellation);
+            index, checkpoints, ai, new ObjectMapper(), cancellation, taskState, imageEnrichment);
 
     @BeforeEach
     void setUp() {
@@ -95,6 +98,17 @@ class DocumentIngestionHandlerTest {
         base.setId(11L);
         base.setStatus(KnowledgeLifecycleStatus.PROCESSING);
         when(bases.selectById(11L)).thenReturn(base);
+        when(taskState.currentStage(99L)).thenReturn("QUEUED", "READ_PARSE", "ENRICH_IMAGES", "CHUNK_EMBED");
+        when(taskState.updateStage(anyLong(), anyString(), anyString())).thenReturn(true);
+        try {
+            when(imageEnrichment.enrich(document, version)).thenAnswer(call -> {
+                version.setMarkdownBucket("knowledge");
+                version.setMarkdownObjectKey("derived/markdown.md");
+                return "# Install\n\nRun the service.\n\n# Verify\n\nCheck health.";
+            });
+        } catch (Exception impossible) {
+            throw new AssertionError(impossible);
+        }
     }
 
     @Test
@@ -106,7 +120,7 @@ class DocumentIngestionHandlerTest {
         assertThat(document.getStatus()).isEqualTo(KnowledgeLifecycleStatus.READY);
         assertThat(document.getCurrentVersionId()).isEqualTo(32L);
         assertThat(version.getIndexStatus()).isEqualTo("PUBLISHED");
-        verify(mineru, never()).parse(any(), anyString(), any(), any());
+        verify(mineru, never()).parse(any(), anyString(), any(), any(), any());
         verify(index).publishVersion(32L);
         verify(checkpoints).complete(eq(99L), eq("PARSED"), anyString(), anyString());
         verify(checkpoints).complete(eq(99L), eq("CHUNKED"), anyString(), anyString());
@@ -117,13 +131,16 @@ class DocumentIngestionHandlerTest {
     @Test
     void completedParseCheckpointResumesFromStoredMarkdown() throws Exception {
         when(checkpoints.isCompleted(99L, "PARSED")).thenReturn(true);
+        version.setRawMarkdownBucket("knowledge");
+        version.setRawMarkdownObjectKey("derived/raw/markdown.md");
+        version.setParser("UTF8_DIRECT");
         version.setMarkdownBucket("knowledge");
         version.setMarkdownObjectKey("derived/markdown.md");
 
         handler.handle(context());
 
         verify(storage, never()).putObject(anyString(), any(), anyLong(), anyString());
-        verify(mineru, never()).parse(any(), anyString(), any(), any());
+        verify(mineru, never()).parse(any(), anyString(), any(), any(), any());
         verify(checkpoints, never()).complete(eq(99L), eq("PARSED"), anyString(), anyString());
     }
 
@@ -136,13 +153,13 @@ class DocumentIngestionHandlerTest {
             String value = key.contains("/original/") ? "%PDF-1.7" : "# Parsed\n\nMinerU content";
             return new ByteArrayInputStream(value.getBytes(StandardCharsets.UTF_8));
         });
-        when(mineru.parse(any(), eq("manual.pdf"), eq("mineru-resume-1"), any()))
+        when(mineru.parse(any(), eq("manual.pdf"), eq("mineru-resume-1"), any(), any()))
                 .thenReturn(new MineruClient.ParseResult("# Parsed\n\nMinerU content", "MINERU_LOCAL",
                         List.of(), "mineru-resume-1"));
 
         handler.handle(context());
 
-        verify(mineru).parse(any(), eq("manual.pdf"), eq("mineru-resume-1"), any());
+        verify(mineru).parse(any(), eq("manual.pdf"), eq("mineru-resume-1"), any(), any());
         assertThat(version.getParser()).isEqualTo("MINERU_LOCAL");
         assertThat(version.getMineruTaskId()).isEqualTo("mineru-resume-1");
     }
@@ -151,7 +168,7 @@ class DocumentIngestionHandlerTest {
     void mineruPollCancellationStopsBeforeDerivedAssetsAreStored() {
         document.setTitle("manual.pdf");
         doNothing().doThrow(new TaskCancellationException()).when(cancellation).checkProcessingTask(99L);
-        when(mineru.parse(any(), eq("manual.pdf"), any(), any())).thenAnswer(call -> {
+        when(mineru.parse(any(), eq("manual.pdf"), any(), any(), any())).thenAnswer(call -> {
             MineruClient.ParseObserver observer = call.getArgument(3);
             observer.beforePoll("mineru-1");
             return new MineruClient.ParseResult("# should-not-persist", "MINERU_LOCAL", List.of(), "mineru-1");

@@ -49,7 +49,10 @@ public class ProcessingTaskStateMachineImpl implements ProcessingTaskStateMachin
                 && !task.getLeaseExpiresAt().isBefore(now) && !owner.equals(task.getLeaseOwner())) {
             return new LeaseResult(LeaseStatus.BUSY, version);
         }
-        int updated = mapper.acquireLease(taskId, version, owner, normalizeStage(stage), now,
+        String acquireStage = task.getState() == ProcessingTaskState.PENDING
+                || !StringUtils.hasText(task.getStage())
+                ? normalizeStage(stage) : normalizeStage(task.getStage());
+        int updated = mapper.acquireLease(taskId, version, owner, acquireStage, now,
                 now.plus(leaseDuration));
         return updated == 1 ? new LeaseResult(LeaseStatus.ACQUIRED, version + 1)
                 : new LeaseResult(LeaseStatus.BUSY, version);
@@ -61,6 +64,18 @@ public class ProcessingTaskStateMachineImpl implements ProcessingTaskStateMachin
         requirePositive(leaseDuration);
         LocalDateTime now = LocalDateTime.now();
         return mapper.renewLease(taskId, expectedVersion, owner, now, now.plus(leaseDuration)) == 1;
+    }
+
+    @Override
+    public boolean updateStage(Long taskId, String owner, String stage) {
+        requireOwner(owner);
+        return mapper.updateOwnedStage(taskId, owner, normalizeStage(stage), LocalDateTime.now()) == 1;
+    }
+
+    @Override
+    public String currentStage(Long taskId) {
+        ProcessingTask task = mapper.selectById(taskId);
+        return task == null ? null : task.getStage();
     }
 
     @Override

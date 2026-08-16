@@ -142,6 +142,7 @@ function Ensure-LocalDevelopmentSecret {
 Import-EnvironmentFile -Path (Join-Path $repoRoot ".env")
 foreach ($name in @(
     "SILICONFLOW_API_KEY",
+    "DASHSCOPE_API_KEY",
     "TENCENT_CLOUD_SECRET_ID",
     "TENCENT_CLOUD_SECRET_KEY",
     "VIDEOMIND_DATA_ROOT",
@@ -322,6 +323,9 @@ if ($LASTEXITCODE -ne 0) {
 if (-not $env:SILICONFLOW_API_KEY) {
     Write-Warning "SILICONFLOW_API_KEY is not configured. Real AI requests will fail."
 }
+if (-not $env:DASHSCOPE_API_KEY) {
+    Write-Warning "DASHSCOPE_API_KEY is not configured. Document image understanding will degrade safely."
+}
 if (-not $env:TENCENT_CLOUD_SECRET_ID -or -not $env:TENCENT_CLOUD_SECRET_KEY) {
     Write-Warning "Tencent ASR credentials are not configured. Set rotated TENCENT_CLOUD_SECRET_ID and TENCENT_CLOUD_SECRET_KEY as local environment variables; never write them to the repository."
 }
@@ -330,6 +334,7 @@ $env:VIDEOMIND_ASR_MODE = "real"
 $env:VIDEOMIND_SUMMARY_MODE = "real"
 $env:VIDEOMIND_EMBEDDING_MODE = "real"
 $env:VIDEOMIND_CHAT_MODE = "real"
+$env:VIDEOMIND_VISION_MODE = "real"
 $env:KNOWLEDGE_TTL_SECONDS = "2592000"
 $env:REDIS_PORT = "6380"
 

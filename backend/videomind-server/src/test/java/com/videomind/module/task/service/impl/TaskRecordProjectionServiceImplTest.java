@@ -13,14 +13,20 @@ import com.videomind.module.task.entity.ProcessingTask;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.mapper.TaskRecordMapper;
+import com.videomind.module.knowledge.mapper.KnowledgeDocumentMapper;
+import com.videomind.module.knowledge.mapper.KnowledgeBaseMapper;
+import com.videomind.module.knowledge.mapper.DocumentVersionMapper;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 
 class TaskRecordProjectionServiceImplTest {
     private final ProcessingTaskMapper processingTasks = mock(ProcessingTaskMapper.class);
     private final TaskRecordMapper taskRecords = mock(TaskRecordMapper.class);
+    private final KnowledgeDocumentMapper documents = mock(KnowledgeDocumentMapper.class);
+    private final KnowledgeBaseMapper knowledgeBases = mock(KnowledgeBaseMapper.class);
+    private final DocumentVersionMapper versions = mock(DocumentVersionMapper.class);
     private final TaskRecordProjectionServiceImpl projection =
-            new TaskRecordProjectionServiceImpl(processingTasks, taskRecords);
+            new TaskRecordProjectionServiceImpl(processingTasks, taskRecords, documents, knowledgeBases, versions);
 
     @Test
     void projectsRetryStateAndAttemptCountToExternalTask() {

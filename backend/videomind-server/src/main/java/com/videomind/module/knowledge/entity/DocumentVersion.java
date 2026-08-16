@@ -17,11 +17,18 @@ public class DocumentVersion {
     private String originalObjectKey;
     private Long originalFileSize;
     private String originalContentType;
+    private String rawMarkdownBucket;
+    private String rawMarkdownObjectKey;
     private String markdownBucket;
     private String markdownObjectKey;
+    private String manifestBucket;
+    private String manifestObjectKey;
     private String parser;
     private String mineruTaskId;
     private String processingStage;
+    private String visualStatus;
+    private Integer imageCount;
+    private Integer describedImageCount;
     private String indexStatus;
     private String embeddingModel;
     private Integer embeddingDimension;

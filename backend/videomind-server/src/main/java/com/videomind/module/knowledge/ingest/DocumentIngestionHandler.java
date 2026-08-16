@@ -26,6 +26,7 @@ import com.videomind.module.knowledge.retrieval.RetrievalCandidate;
 import com.videomind.module.task.service.ProcessingTaskHandler;
 import com.videomind.module.task.service.TaskCheckpointService;
 import com.videomind.module.task.service.TaskCancellationGuard;
+import com.videomind.module.task.service.ProcessingTaskStateMachine;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -37,6 +38,9 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -58,6 +62,8 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
     private final AiProperties aiProperties;
     private final ObjectMapper objectMapper;
     private final TaskCancellationGuard cancellation;
+    private final ProcessingTaskStateMachine taskState;
+    private final DocumentImageEnrichmentService imageEnrichment;
 
     @Override
     public ProcessingTaskType type() {
@@ -73,15 +79,24 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
         DocumentVersion version = requireVersion(versionId, documentId);
 
         if (!checkpoints.isCompleted(context.taskId(), "PARSED")) {
+            advance(context, DocumentIngestionStage.READ_PARSE);
             parse(context.taskId(), document, version);
             cancellation.checkProcessingTask(context.taskId());
-            checkpoints.complete(context.taskId(), "PARSED", artifact(version), markdownChecksum(version));
+            checkpoints.complete(context.taskId(), "PARSED", parsedArtifact(version), rawMarkdownChecksum(version));
+        }
+        if (!checkpoints.isCompleted(context.taskId(), "IMAGES_ENRICHED")) {
+            advance(context, DocumentIngestionStage.ENRICH_IMAGES);
+            cancellation.checkProcessingTask(context.taskId());
+            String enhanced = imageEnrichment.enrich(document, version);
+            checkpoints.complete(context.taskId(), "IMAGES_ENRICHED", enrichedArtifact(version),
+                    sha256(enhanced.getBytes(StandardCharsets.UTF_8)));
         }
         String markdown = readMarkdown(version);
 
         if (!checkpoints.isCompleted(context.taskId(), "CHUNKED")) {
+            advance(context, DocumentIngestionStage.CHUNK_EMBED);
             cancellation.checkProcessingTask(context.taskId());
-            persistChunks(document, version, markdown);
+            persistChunks(document, version, DocumentImageEnrichmentService.forEmbedding(markdown));
             checkpoints.complete(context.taskId(), "CHUNKED", "{\"versionId\":" + version.getId() + "}",
                     sha256((version.getId() + ":" + markdown).getBytes(StandardCharsets.UTF_8)));
         }
@@ -91,6 +106,7 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
         }
 
         if (!checkpoints.isCompleted(context.taskId(), "INDEXED")) {
+            advance(context, DocumentIngestionStage.CHUNK_EMBED);
             cancellation.checkProcessingTask(context.taskId());
             stageIndex(document, version, values);
             checkpoints.complete(context.taskId(), "INDEXED", "{\"chunkCount\":" + values.size() + "}",
@@ -98,12 +114,13 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
         }
 
         if (!checkpoints.isCompleted(context.taskId(), "PUBLISHED")) {
+            advance(context, DocumentIngestionStage.PUBLISH);
             cancellation.checkProcessingTask(context.taskId());
             publish(document, version, values.size());
             checkpoints.complete(context.taskId(), "PUBLISHED", "{\"chunkCount\":" + values.size() + "}",
                     chunkSetChecksum(values));
         }
-        return "PUBLISHED";
+        return DocumentIngestionStage.PUBLISHED.name();
     }
 
     private void parse(Long taskId, KnowledgeDocument document, DocumentVersion version) throws Exception {
@@ -115,6 +132,7 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
         String parser;
         List<MineruClient.Asset> parsedAssets = List.of();
         if (fileValidator.mineruRequired(document.getTitle())) {
+            Path workspace = Path.of("runtime", "document-ingest", "task-" + taskId).toAbsolutePath().normalize();
             MineruClient.ParseResult result = mineru.parse(original, document.getTitle(), version.getMineruTaskId(),
                     new MineruClient.ParseObserver() {
                         @Override
@@ -129,7 +147,7 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
                         public void beforePoll(String mineruTaskId) {
                             cancellation.checkProcessingTask(taskId);
                         }
-                    });
+                    }, workspace);
             markdown = result.content();
             parser = result.parser();
             parsedAssets = result.assets();
@@ -143,12 +161,14 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
             throw new IllegalStateException("DOCUMENT_MARKDOWN_EMPTY");
         }
         String prefix = derivedPrefix(version.getOriginalObjectKey());
-        StoredObject markdownObject = storage.putObject(prefix + "/markdown.md",
+        StoredObject markdownObject = storage.putObject(prefix + "/raw/markdown.md",
                 new ByteArrayInputStream(markdown.getBytes(StandardCharsets.UTF_8)),
                 markdown.getBytes(StandardCharsets.UTF_8).length, "text/markdown; charset=utf-8");
         for (MineruClient.Asset asset : parsedAssets) {
             String extension = extension(asset.path());
-            StoredObject stored = storage.putObject(prefix + "/assets/" + asset.ordinal() + extension,
+            String contentHash = sha256(asset.bytes());
+            StoredObject stored = storage.putObject(prefix + "/assets/" + asset.ordinal() + "-"
+                            + contentHash.substring(0, 12) + extension,
                     new ByteArrayInputStream(asset.bytes()), asset.bytes().length, asset.mediaType());
             DocumentAsset value = new DocumentAsset();
             value.setDocumentVersionId(version.getId());
@@ -158,15 +178,21 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
             value.setBucket(stored.getBucket());
             value.setObjectKey(stored.getObjectKey());
             value.setSourcePath(asset.path());
+            value.setContentHash(contentHash);
+            value.setVisionStatus("PENDING");
             value.setCreatedTime(LocalDateTime.now());
+            value.setUpdatedTime(LocalDateTime.now());
             assets.insertIgnore(value);
         }
-        version.setMarkdownBucket(markdownObject.getBucket());
-        version.setMarkdownObjectKey(markdownObject.getObjectKey());
+        version.setRawMarkdownBucket(markdownObject.getBucket());
+        version.setRawMarkdownObjectKey(markdownObject.getObjectKey());
+        version.setImageCount(parsedAssets.size());
+        version.setVisualStatus(parsedAssets.isEmpty() ? "NOT_APPLICABLE" : "PENDING");
         version.setParser(parser);
         version.setProcessingStage("PARSED");
         version.setUpdatedTime(LocalDateTime.now());
         versions.updateById(version);
+        deleteWorkspace(taskId);
     }
 
     private void persistChunks(KnowledgeDocument document, DocumentVersion version, String markdown) {
@@ -301,14 +327,42 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
         }
     }
 
-    private String markdownChecksum(DocumentVersion version) throws Exception {
-        return sha256(readMarkdown(version).getBytes(StandardCharsets.UTF_8));
+    private String rawMarkdownChecksum(DocumentVersion version) throws Exception {
+        if (version.getRawMarkdownBucket() == null || version.getRawMarkdownObjectKey() == null) {
+            throw new IllegalStateException("DOCUMENT_RAW_MARKDOWN_NOT_REGISTERED");
+        }
+        try (InputStream input = storage.getObject(version.getRawMarkdownBucket(), version.getRawMarkdownObjectKey())) {
+            return sha256(input.readAllBytes());
+        }
     }
 
-    private String artifact(DocumentVersion version) throws Exception {
+    private String parsedArtifact(DocumentVersion version) throws Exception {
+        return objectMapper.writeValueAsString(Map.of("versionId", version.getId(),
+                "bucket", version.getRawMarkdownBucket(), "objectKey", version.getRawMarkdownObjectKey(),
+                "parser", version.getParser() == null ? "UNKNOWN" : version.getParser()));
+    }
+
+    private String enrichedArtifact(DocumentVersion version) throws Exception {
         return objectMapper.writeValueAsString(Map.of("versionId", version.getId(),
                 "bucket", version.getMarkdownBucket(), "objectKey", version.getMarkdownObjectKey(),
-                "parser", version.getParser()));
+                "visualStatus", version.getVisualStatus() == null ? "NOT_APPLICABLE" : version.getVisualStatus()));
+    }
+
+    private void advance(TaskExecutionContext context, DocumentIngestionStage next) {
+        String currentName = taskState.currentStage(context.taskId());
+        DocumentIngestionStage current;
+        try {
+            current = currentName == null ? DocumentIngestionStage.QUEUED
+                    : DocumentIngestionStage.valueOf(currentName);
+        } catch (IllegalArgumentException invalid) {
+            throw new IllegalStateException("DOCUMENT_STAGE_INVALID:" + currentName);
+        }
+        if (!current.canAdvanceTo(next)) {
+            throw new IllegalStateException("DOCUMENT_STAGE_ROLLBACK:" + current + "->" + next);
+        }
+        if (!taskState.updateStage(context.taskId(), context.owner(), next.name())) {
+            throw new IllegalStateException("DOCUMENT_STAGE_UPDATE_FAILED:" + next);
+        }
     }
 
     private static String chunkSetChecksum(List<DocumentChunk> values) {
@@ -350,5 +404,16 @@ public class DocumentIngestionHandler implements ProcessingTaskHandler {
         } catch (Exception impossible) {
             throw new IllegalStateException(impossible);
         }
+    }
+
+    private static void deleteWorkspace(Long taskId) {
+        Path root = Path.of("runtime", "document-ingest").toAbsolutePath().normalize();
+        Path target = root.resolve("task-" + taskId).normalize();
+        if (!target.startsWith(root) || !Files.exists(target)) return;
+        try (Stream<Path> paths = Files.walk(target)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try { Files.deleteIfExists(path); } catch (Exception ignored) { }
+            });
+        } catch (Exception ignored) { }
     }
 }

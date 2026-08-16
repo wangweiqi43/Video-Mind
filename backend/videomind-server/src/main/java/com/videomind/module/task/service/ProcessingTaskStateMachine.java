@@ -7,6 +7,10 @@ public interface ProcessingTaskStateMachine {
 
     boolean renew(Long taskId, String owner, long expectedVersion, Duration leaseDuration);
 
+    boolean updateStage(Long taskId, String owner, String stage);
+
+    String currentStage(Long taskId);
+
     boolean succeed(Long taskId, String owner, long expectedVersion, String finalStage);
 
     boolean retry(Long taskId, String owner, long expectedVersion, String stage,

@@ -7,22 +7,17 @@ import java.time.LocalDateTime;
 import lombok.Data;
 
 @Data
-@TableName("document_asset")
-public class DocumentAsset {
+@TableName("document_upload_idempotency")
+public class DocumentUploadIdempotency {
     @TableId(type = IdType.AUTO)
     private Long id;
+    private Long userId;
+    private Long knowledgeBaseId;
+    private String idempotencyKey;
+    private String requestFingerprint;
+    private Long documentId;
     private Long documentVersionId;
-    private Integer ordinalNo;
-    private String assetType;
-    private String mediaType;
-    private String bucket;
-    private String objectKey;
-    private String sourcePath;
-    private String contentHash;
-    private String description;
-    private String visionStatus;
-    private String visionModel;
-    private String visionErrorCode;
+    private Long processingTaskId;
     private LocalDateTime createdTime;
     private LocalDateTime updatedTime;
 }

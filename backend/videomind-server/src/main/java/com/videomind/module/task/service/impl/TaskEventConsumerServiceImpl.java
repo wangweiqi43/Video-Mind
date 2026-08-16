@@ -97,7 +97,8 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
             throw new NonRetryableTaskMessageException("TASK_HANDLER_MISSING");
         }
         try {
-            String finalStage = handler.handle(new TaskExecutionContext(event.getTaskId(), event.getEventId(), command));
+            String finalStage = handler.handle(new TaskExecutionContext(
+                    event.getTaskId(), event.getEventId(), owner, command));
             if (!stateMachine.succeed(event.getTaskId(), owner, lease.stateVersion(), finalStage)) {
                 if (stateMachine.cancellationRequested(event.getTaskId())) {
                     stateMachine.cancel(event.getTaskId(), owner);
@@ -114,13 +115,14 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
             taskRecords.project(event.getTaskId());
             inbox.complete(consumerGroup, event.getEventId());
         } catch (NonRetryableTaskMessageException known) {
-            stateMachine.fail(event.getTaskId(), owner, lease.stateVersion(), command.initialStage(),
+            stateMachine.fail(event.getTaskId(), owner, lease.stateVersion(), failureStage(event.getTaskId(), command),
                     known.getMessage(), known.getMessage());
             taskRecords.project(event.getTaskId());
             inbox.complete(consumerGroup, event.getEventId());
             throw known;
         } catch (Exception failure) {
-            boolean retrying = stateMachine.retry(event.getTaskId(), owner, lease.stateVersion(), command.initialStage(),
+            boolean retrying = stateMachine.retry(event.getTaskId(), owner, lease.stateVersion(),
+                    failureStage(event.getTaskId(), command),
                     Duration.ofSeconds(Math.max(1, retryDelaySeconds)), "TASK_EXECUTION_FAILED",
                     failure.getMessage());
             if (retrying) {
@@ -128,6 +130,11 @@ public class TaskEventConsumerServiceImpl implements TaskEventConsumerService {
             }
             throw new RetryableTaskMessageException("TASK_EXECUTION_FAILED", failure);
         }
+    }
+
+    private String failureStage(Long taskId, TaskCreateCommand command) {
+        String current = stateMachine.currentStage(taskId);
+        return current == null || current.isBlank() ? command.initialStage() : current;
     }
 
     private TaskCreateCommand command(MqTransactionEvent event) {

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import com.videomind.common.enums.KnowledgeLifecycleStatus;
 import com.videomind.module.knowledge.dto.DocumentUploadResponse;
 import com.videomind.module.knowledge.service.DocumentUploadService;
+import com.videomind.module.knowledge.mapper.DocumentUploadIdempotencyMapper;
 import com.videomind.module.task.mq.TaskDispatchResult;
 import com.videomind.module.task.mq.TransactionalTaskMessageProducer;
 import org.junit.jupiter.api.Test;
@@ -19,20 +20,22 @@ import org.springframework.mock.web.MockMultipartFile;
 class KnowledgeDocumentApplicationServiceImplTest {
     private final DocumentUploadService uploads = mock(DocumentUploadService.class);
     private final TransactionalTaskMessageProducer messages = mock(TransactionalTaskMessageProducer.class);
+    private final DocumentUploadIdempotencyMapper idempotency = mock(DocumentUploadIdempotencyMapper.class);
     private final KnowledgeDocumentApplicationServiceImpl service =
-            new KnowledgeDocumentApplicationServiceImpl(uploads, messages);
+            new KnowledgeDocumentApplicationServiceImpl(uploads, messages, idempotency);
+    private static final String KEY = "11111111-1111-1111-1111-111111111111";
     private final MockMultipartFile file = new MockMultipartFile("file", "manual.md", "text/markdown",
             "content".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
     @Test
     void dispatchesOnlyAfterRegistrationReturnsAndExposesTaskIdentity() {
-        when(uploads.upload(7L, 11L, file)).thenReturn(response(KnowledgeLifecycleStatus.PROCESSING, false));
+        when(uploads.upload(7L, 11L, file, KEY)).thenReturn(response(KnowledgeLifecycleStatus.PROCESSING, false));
         when(messages.dispatch(any())).thenReturn(new TaskDispatchResult("event-1", 99L, 21L, false));
 
-        DocumentUploadResponse result = service.uploadAndDispatch(7L, 11L, file);
+        DocumentUploadResponse result = service.uploadAndDispatch(7L, 11L, file, KEY);
 
         var order = inOrder(uploads, messages);
-        order.verify(uploads).upload(7L, 11L, file);
+        order.verify(uploads).upload(7L, 11L, file, KEY);
         order.verify(messages).dispatch(any());
         assertThat(result.eventId()).isEqualTo("event-1");
         assertThat(result.taskId()).isEqualTo(99L);
@@ -41,9 +44,9 @@ class KnowledgeDocumentApplicationServiceImplTest {
 
     @Test
     void readyShaDuplicateDoesNotCreateAnotherMessage() {
-        when(uploads.upload(7L, 11L, file)).thenReturn(response(KnowledgeLifecycleStatus.READY, true));
+        when(uploads.upload(7L, 11L, file, KEY)).thenReturn(response(KnowledgeLifecycleStatus.READY, true));
 
-        DocumentUploadResponse result = service.uploadAndDispatch(7L, 11L, file);
+        DocumentUploadResponse result = service.uploadAndDispatch(7L, 11L, file, KEY);
 
         assertThat(result.duplicated()).isTrue();
         assertThat(result.taskId()).isNull();
@@ -52,10 +55,10 @@ class KnowledgeDocumentApplicationServiceImplTest {
 
     @Test
     void processingShaDuplicateRedispatchesAndReusesActiveTaskFingerprint() {
-        when(uploads.upload(7L, 11L, file)).thenReturn(response(KnowledgeLifecycleStatus.PROCESSING, true));
+        when(uploads.upload(7L, 11L, file, KEY)).thenReturn(response(KnowledgeLifecycleStatus.PROCESSING, true));
         when(messages.dispatch(any())).thenReturn(new TaskDispatchResult("event-2", 88L, 21L, true));
 
-        DocumentUploadResponse result = service.uploadAndDispatch(7L, 11L, file);
+        DocumentUploadResponse result = service.uploadAndDispatch(7L, 11L, file, KEY);
 
         assertThat(result.taskId()).isEqualTo(88L);
         assertThat(result.reusedTask()).isTrue();

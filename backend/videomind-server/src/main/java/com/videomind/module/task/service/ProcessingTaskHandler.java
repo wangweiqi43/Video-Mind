@@ -8,6 +8,9 @@ public interface ProcessingTaskHandler {
 
     String handle(TaskExecutionContext context) throws Exception;
 
-    record TaskExecutionContext(Long taskId, String eventId, TaskCreateCommand command) {
+    record TaskExecutionContext(Long taskId, String eventId, String owner, TaskCreateCommand command) {
+        public TaskExecutionContext(Long taskId, String eventId, TaskCreateCommand command) {
+            this(taskId, eventId, "test-owner", command);
+        }
     }
 }

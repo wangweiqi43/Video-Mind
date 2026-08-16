@@ -8,6 +8,13 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Update;
 
 public interface ProcessingTaskMapper extends BaseMapper<ProcessingTask> {
+    @Update("""
+            UPDATE processing_task SET stage = #{stage}, updated_time = #{now}
+             WHERE id = #{taskId} AND state = 'PROCESSING' AND lease_owner = #{owner}
+            """)
+    int updateOwnedStage(@Param("taskId") Long taskId, @Param("owner") String owner,
+                         @Param("stage") String stage, @Param("now") LocalDateTime now);
+
     @Insert("""
             INSERT IGNORE INTO processing_task
                 (id, event_id, user_id, task_type, business_id, business_fingerprint,
