@@ -1,86 +1,59 @@
 package com.videomind.module.chat.llm;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.videomind.common.exception.BizException;
-import com.videomind.config.AiProperties;
-import com.videomind.infrastructure.ai.AiApiSupport;
+import com.videomind.config.LangChain4jModelConfig;
 import com.videomind.module.chat.entity.ChatMessage;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
 import java.util.List;
-import java.util.Map;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-import org.springframework.web.client.RestClient;
 
 @Component
-@RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "videomind.ai.chat", name = "mode", havingValue = "real")
 public class RealChatMemoryCompressor implements ChatMemoryCompressor {
 
     private static final int MESSAGE_CONTENT_LIMIT = 1000;
+    private static final String SYSTEM_PROMPT = """
+            You are a conversation memory compressor for VideoMind.
+            Merge the existing memory summary and the new chat history into one concise long-term memory.
+            Keep user goals, confirmed facts, important constraints, unresolved questions, and video-related context.
+            Remove greetings, duplicated wording, and irrelevant details.
+            Do not invent facts. Write in Chinese. Keep the result within 800 Chinese characters.
+            """;
 
-    private final AiProperties aiProperties;
-    private final RestClient aiRestClient;
+    private final ChatModel chatModel;
+
+    public RealChatMemoryCompressor(
+            @Qualifier(LangChain4jModelConfig.CHAT_MODEL) ChatModel chatModel
+    ) {
+        this.chatModel = chatModel;
+    }
 
     @Override
     public String compress(String existingSummary, List<ChatMessage> messages) {
         if (messages == null || messages.isEmpty()) {
             return existingSummary;
         }
-        AiProperties.ApiProvider chat = aiProperties.getChat();
-        AiApiSupport.requireConfigured("Chat memory compressor", chat);
-
-        JsonNode response = aiRestClient.post()
-                .uri(chat.getEndpoint())
-                .headers(headers -> AiApiSupport.setBearerAuth(headers, chat.getApiKey()))
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(buildRequest(existingSummary, messages, chat))
-                .retrieve()
-                .body(JsonNode.class);
-
-        String content = AiApiSupport.firstText(
-                response,
-                "choices[0].message.content",
-                "data.choices[0].message.content",
-                "answer",
-                "text",
-                "data.text"
-        );
+        ChatRequest request = ChatRequest.builder()
+                .messages(SystemMessage.from(SYSTEM_PROMPT), UserMessage.from(buildUserPrompt(existingSummary, messages)))
+                .temperature(0.1)
+                .maxOutputTokens(1200)
+                .build();
+        String content;
+        try {
+            content = chatModel.chat(request).aiMessage().text();
+        } catch (RuntimeException ex) {
+            throw new BizException(500, "Chat memory compressor model call failed: " + safeMessage(ex));
+        }
         if (!StringUtils.hasText(content)) {
             throw new BizException(500, "Chat memory compressor response does not contain text content.");
         }
         return content.strip();
-    }
-
-    private Map<String, Object> buildRequest(String existingSummary, List<ChatMessage> messages, AiProperties.ApiProvider chat) {
-        List<Map<String, String>> requestMessages = new ArrayList<>();
-        requestMessages.add(Map.of(
-                "role", "system",
-                "content", """
-                        You are a conversation memory compressor for VideoMind.
-                        Merge the existing memory summary and the new chat history into one concise long-term memory.
-                        Keep user goals, confirmed facts, important constraints, unresolved questions, and video-related context.
-                        Remove greetings, duplicated wording, and irrelevant details.
-                        Do not invent facts. Write in Chinese. Keep the result within 800 Chinese characters.
-                        """
-        ));
-        requestMessages.add(Map.of(
-                "role", "user",
-                "content", buildUserPrompt(existingSummary, messages)
-        ));
-
-        Map<String, Object> request = new LinkedHashMap<>();
-        if (StringUtils.hasText(chat.getModel())) {
-            request.put("model", chat.getModel());
-        }
-        request.put("messages", requestMessages);
-        request.put("temperature", 0.1);
-        request.put("max_tokens", 1200);
-        return request;
     }
 
     private String buildUserPrompt(String existingSummary, List<ChatMessage> messages) {
@@ -104,5 +77,9 @@ public class RealChatMemoryCompressor implements ChatMemoryCompressor {
             return text;
         }
         return text.substring(0, maxLength) + "...";
+    }
+
+    private static String safeMessage(Throwable error) {
+        return StringUtils.hasText(error.getMessage()) ? error.getMessage() : error.getClass().getSimpleName();
     }
 }

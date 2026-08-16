@@ -23,6 +23,7 @@ public class AiProperties {
          */
         private String mode = "mock";
         private String provider = "generic";
+        private String baseUrl;
         private String endpoint;
         private String apiKey;
         private String model;
