@@ -163,6 +163,24 @@ class ChatServiceLocalWorkflowTest {
         verify(answers, never()).streamAnswer(any(), any(), any(), any(), any(), any(), any());
     }
 
+    @Test
+    void keepsPreviewWithinDatabaseLimitAndDoesNotSplitUnicodeCodePoints() {
+        String answer = "中".repeat(508) + "😀" + "尾".repeat(20);
+
+        String preview = ChatServiceImpl.shorten(answer, 512);
+
+        assertThat(preview.codePointCount(0, preview.length())).isEqualTo(512);
+        assertThat(preview).contains("😀").endsWith("...");
+        assertThat(preview.codePointBefore(preview.length() - 3)).isEqualTo(0x1F600);
+    }
+
+    @Test
+    void treatsMaximumAsFinalLengthIncludingEllipsis() {
+        assertThat(ChatServiceImpl.shorten("abcdefgh", 5)).isEqualTo("ab...");
+        assertThat(ChatServiceImpl.shorten("abcdefgh", 3)).isEqualTo("...");
+        assertThat(ChatServiceImpl.shorten("abcdefgh", 0)).isEmpty();
+    }
+
     private ChatSession session() {
         ChatSession session = new ChatSession();
         session.setId(13L);

@@ -329,8 +329,24 @@ public class ChatServiceImpl implements ChatService {
                 .createdTime(message.getCreatedTime()).build();
     }
 
-    private String shorten(String value, int max) {
-        return !StringUtils.hasText(value) || value.length() <= max ? value : value.substring(0, max) + "...";
+    static String shorten(String value, int max) {
+        if (!StringUtils.hasText(value)) {
+            return value;
+        }
+        if (max <= 0) {
+            return "";
+        }
+        int codePointCount = value.codePointCount(0, value.length());
+        if (codePointCount <= max) {
+            return value;
+        }
+        String suffix = "...";
+        if (max <= suffix.length()) {
+            return suffix.substring(0, max);
+        }
+        int contentCodePoints = max - suffix.length();
+        int endIndex = value.offsetByCodePoints(0, contentCodePoints);
+        return value.substring(0, endIndex) + suffix;
     }
 
     private record RetrievalOutcome(List<RagReference> references, WorkflowAuditService.Session audit,
