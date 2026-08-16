@@ -17,7 +17,9 @@ import com.videomind.module.knowledge.retrieval.KnowledgeIndexGateway.IndexedChu
 import com.videomind.module.knowledge.retrieval.RetrievalCandidate;
 import com.videomind.module.knowledge.service.KnowledgeBaseService;
 import com.videomind.module.task.analysis.VideoAnalysisVersions;
-import com.videomind.module.knowledge.timeline.TimelineFusionService.TimelineEvent;
+import com.videomind.module.knowledge.timeline.TimelineFusionService.SpeechBlock;
+import com.videomind.module.knowledge.timeline.TimelineFusionService.Timeline;
+import com.videomind.module.knowledge.timeline.TimelineFusionService.VisualSpan;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -46,7 +48,7 @@ public class TimelineKnowledgeIndexer {
                 sha256(timeline.markdown()));
         DocumentVersion version = findOrCreateVersion(document.getId(), versionNumber, timeline);
         List<DocumentChunk> values = persistChunks(userId, knowledgeBase.getId(), document, version,
-                videoTitle, timeline.timeline().events());
+                videoTitle, timeline.timeline());
         if (values.isEmpty()) {
             throw new IllegalArgumentException("VIDEO_TIMELINE_CHUNKS_EMPTY");
         }
@@ -149,10 +151,9 @@ public class TimelineKnowledgeIndexer {
 
     private List<DocumentChunk> persistChunks(Long userId, Long knowledgeBaseId, KnowledgeDocument document,
                                               DocumentVersion version, String title,
-                                              List<TimelineEvent> events) {
+                                              Timeline timeline) {
         int chunkIndex = 0;
-        for (TimelineEvent event : events) {
-            String content = content(event);
+        for (LayeredEntry entry : layeredEntries(timeline)) {
             DocumentChunk value = new DocumentChunk();
             value.setEmbeddingId(sha256(version.getId() + ":timeline:" + chunkIndex));
             value.setUserId(userId);
@@ -163,12 +164,12 @@ public class TimelineKnowledgeIndexer {
             value.setChunkIndex(chunkIndex);
             value.setParentIndex(chunkIndex);
             value.setChildIndex(0);
-            value.setHeading(TimelineFusionService.format(event.startMs()) + " - "
-                    + TimelineFusionService.format(event.endMs()));
-            value.setContent(content);
-            value.setParentContent("# " + title + "\n\n" + content);
-            value.setStartMs(event.startMs());
-            value.setEndMs(event.endMs());
+            value.setHeading(entry.kind() + " " + TimelineFusionService.format(entry.startMs()) + " - "
+                    + TimelineFusionService.format(entry.endMs()));
+            value.setContent(entry.content());
+            value.setParentContent("# " + title + "\n\n" + entry.content());
+            value.setStartMs(entry.startMs());
+            value.setEndMs(entry.endMs());
             value.setPublished(false);
             value.setCreatedTime(LocalDateTime.now());
             chunks.insertIgnore(value);
@@ -186,18 +187,22 @@ public class TimelineKnowledgeIndexer {
         }
     }
 
-    private static String content(TimelineEvent event) {
-        StringBuilder value = new StringBuilder();
-        if (!event.speechText().isBlank()) {
-            value.append("语音：").append(event.speechText());
+    private static List<LayeredEntry> layeredEntries(Timeline timeline) {
+        List<LayeredEntry> entries = new ArrayList<>();
+        for (VisualSpan span : timeline.visualSpans()) {
+            entries.add(new LayeredEntry(span.startMs(), span.endMs(), 0, "画面区间",
+                    "画面文字：" + span.text()));
         }
-        if (!event.visualTexts().isEmpty()) {
-            if (!value.isEmpty()) {
-                value.append("\n");
-            }
-            value.append("画面文字：").append(String.join("；", event.visualTexts()));
+        for (SpeechBlock block : timeline.speechBlocks()) {
+            entries.add(new LayeredEntry(block.startMs(), block.endMs(), 1, "语音区间",
+                    "语音：" + block.text()));
         }
-        return value.toString();
+        entries.sort(java.util.Comparator.comparingLong(LayeredEntry::startMs)
+                .thenComparingInt(LayeredEntry::order));
+        return List.copyOf(entries);
+    }
+
+    private record LayeredEntry(long startMs, long endMs, int order, String kind, String content) {
     }
 
     private static String sha256(String value) {

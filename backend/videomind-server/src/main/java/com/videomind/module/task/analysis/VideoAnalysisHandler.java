@@ -2,12 +2,9 @@ package com.videomind.module.task.analysis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.videomind.common.enums.ProcessingTaskType;
-import com.videomind.module.knowledge.timeline.TimelineFusionService.AsrSegment;
-import com.videomind.module.knowledge.timeline.TimelineFusionService.OcrObservation;
+import com.videomind.module.knowledge.timeline.FusedVideoContent;
 import com.videomind.module.knowledge.timeline.TimelineKnowledgeIndexer.IndexedTimeline;
 import com.videomind.module.knowledge.timeline.VideoTimelinePipeline;
-import com.videomind.module.task.analysis.dto.AsrResult;
-import com.videomind.module.task.analysis.dto.AsrSegmentResult;
 import com.videomind.module.task.analysis.dto.AudioExtractionResult;
 import com.videomind.module.task.analysis.dto.SummaryResult;
 import com.videomind.module.task.entity.AiSummaryResult;
@@ -17,17 +14,12 @@ import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.mapper.ProcessingTaskMapper;
 import com.videomind.module.task.mapper.TaskRecordMapper;
 import com.videomind.module.task.service.ProcessingTaskHandler;
-import com.videomind.module.task.service.TaskCancellationException;
 import com.videomind.module.task.service.TaskCancellationGuard;
 import com.videomind.module.task.service.TaskCheckpointService;
 import com.videomind.module.video.entity.VideoFile;
 import com.videomind.module.video.service.VideoFileService;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.util.HexFormat;
-import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,7 +41,7 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
     private final TaskRecordMapper taskRecords;
     private final VideoFileService videos;
     private final AudioExtractorClient audioExtractor;
-    private final SpeechToTextClient speechToText;
+    private final ParallelVideoAnalysisStage parallelStage;
     private final VideoSummaryClient summaryClient;
     private final VideoAnalysisArtifactService artifacts;
     private final VideoTimelinePipeline timelinePipeline;
@@ -68,72 +60,53 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
         TaskData data = requireTaskData(context);
         try {
             return execute(context, data);
-        } catch (TaskCancellationException cancelled) {
+        } catch (Exception failure) {
             tempFiles.cleanup(data.task());
-            throw cancelled;
+            throw failure;
         }
     }
 
     private String execute(TaskExecutionContext context, TaskData data) throws Exception {
         cancellation.checkProcessingTask(context.taskId());
-        AsrResult asr;
-        if (checkpoints.isCompleted(context.taskId(), ASR_PERSISTED)) {
-            asr = artifacts.loadAsr(data.task());
-        } else {
-            AudioExtractionResult audio = recoverOrExtractAudio(context.taskId(), data);
-            cancellation.checkProcessingTask(context.taskId());
-            asr = speechToText.transcribe(context.taskId(), audio, data.video(), data.task());
-            cancellation.checkProcessingTask(context.taskId());
-            if (asr.getSegments() == null || asr.getSegments().isEmpty()) {
-                throw new IllegalStateException("ASR_TIMESTAMP_SEGMENTS_EMPTY");
-            }
-            int version = artifacts.persistAsr(data.task(), data.video(), asr);
-            checkpoints.complete(context.taskId(), ASR_PERSISTED,
-                    json(Map.of("taskRecordId", data.task().getId(), "transcriptVersion", version,
-                            "segmentCount", asr.getSegments().size())), asrChecksum(asr));
+        AudioExtractionResult audio = null;
+        if (!checkpoints.isCompleted(context.taskId(), ASR_PERSISTED)) {
+            audio = recoverOrExtractAudio(context.taskId(), data);
         }
+        ParallelVideoAnalysisStage.BranchResults branches = parallelStage.execute(context.taskId(), audio,
+                data.task(), data.video());
 
         int transcriptVersion = requireTranscriptVersion(data.video());
-        List<OcrObservation> visuals;
-        if (checkpoints.isCompleted(context.taskId(), OCR_PERSISTED)) {
-            visuals = artifacts.loadOcr(data.task());
-        } else {
-            cancellation.checkProcessingTask(context.taskId());
-            visuals = timelinePipeline.recognize(data.task(), data.video());
-            cancellation.checkProcessingTask(context.taskId());
-            artifacts.persistOcr(data.task(), visuals);
-            checkpoints.complete(context.taskId(), OCR_PERSISTED,
-                    json(Map.of("observationCount", visuals.size())), ocrChecksum(visuals));
-        }
-
-        List<AsrSegment> speech = artifacts.loadSpeech(data.task());
+        FusedVideoContent fused = timelinePipeline.fuse(data.video(), artifacts.loadSpeech(data.task()),
+                branches.ocr().observations(), branches.ocr().degraded());
         if (!checkpoints.isCompleted(context.taskId(), TIMELINE_INDEXED)) {
             cancellation.checkProcessingTask(context.taskId());
-            IndexedTimeline indexed = timelinePipeline.build(data.task(), data.video(), transcriptVersion,
-                            speech, visuals)
+            IndexedTimeline indexed = timelinePipeline.materializeAndIndex(data.task(), data.video(),
+                            transcriptVersion, fused)
                     .orElseThrow(() -> new IllegalStateException("VIDEO_TIMELINE_EMPTY"));
             cancellation.checkProcessingTask(context.taskId());
             checkpoints.complete(context.taskId(), TIMELINE_INDEXED,
                     json(Map.of("knowledgeBaseId", indexed.knowledgeBaseId(), "documentId", indexed.documentId(),
                             "versionId", indexed.versionId(), "chunkCount", indexed.chunkCount())),
-                    sha256(asrChecksum(asr) + ":" + ocrChecksum(visuals) + ":" + transcriptVersion));
+                    VideoAnalysisChecksums.sha256(VideoAnalysisChecksums.asr(branches.asr()) + ":"
+                            + VideoAnalysisChecksums.ocr(branches.ocr().observations()) + ":" + transcriptVersion));
         }
 
         if (!checkpoints.isCompleted(context.taskId(), SUMMARY_SAVED)) {
             cancellation.checkProcessingTask(context.taskId());
-            SummaryResult summary = summaryClient.summarize(asr, data.video(), data.task());
+            SummaryResult summary = summaryClient.summarize(fused, data.video(), data.task());
             cancellation.checkProcessingTask(context.taskId());
             AiSummaryResult saved = artifacts.saveSummary(data.task(), data.video(), transcriptVersion, summary);
             checkpoints.complete(context.taskId(), SUMMARY_SAVED,
                     json(Map.of("summaryId", saved.getId(), "model", safe(summary.getModelName()))),
-                    sha256(safe(summary.getSummaryText()) + ":" + safe(summary.getSummaryJson())));
+                    VideoAnalysisChecksums.sha256(safe(summary.getSummaryText()) + ":"
+                            + safe(summary.getSummaryJson())));
         }
 
         if (!checkpoints.isCompleted(context.taskId(), PUBLISHED)) {
             cancellation.checkProcessingTask(context.taskId());
             checkpoints.complete(context.taskId(), PUBLISHED,
                     json(Map.of("videoId", data.video().getId(), "transcriptVersion", transcriptVersion)),
-                    sha256(data.video().getId() + ":" + transcriptVersion));
+                    VideoAnalysisChecksums.sha256(data.video().getId() + ":" + transcriptVersion));
         }
         return PUBLISHED;
     }
@@ -159,13 +132,14 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
         if (completed != null) {
             AudioArtifact artifact = objectMapper.readValue(completed.getArtifactJson(), AudioArtifact.class);
             if (isVirtualAudio(artifact.audioPath())
-                    && completed.getChecksum().equals(sha256(artifact.audioPath()))) {
+                    && completed.getChecksum().equals(VideoAnalysisChecksums.sha256(artifact.audioPath()))) {
                 return AudioExtractionResult.builder().audioPath(artifact.audioPath())
                         .durationSeconds(artifact.durationSeconds())
                         .audioDurationSeconds(effectiveAudioDuration(artifact)).build();
             }
             Path path = Path.of(artifact.audioPath());
-            if (Files.isRegularFile(path) && completed.getChecksum().equals(sha256(Files.readAllBytes(path)))) {
+            if (Files.isRegularFile(path)
+                    && completed.getChecksum().equals(VideoAnalysisChecksums.sha256(Files.readAllBytes(path)))) {
                 return AudioExtractionResult.builder().audioPath(path.toString())
                         .durationSeconds(artifact.durationSeconds())
                         .audioDurationSeconds(effectiveAudioDuration(artifact)).build();
@@ -179,7 +153,8 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
         if (path != null && (!Files.isRegularFile(path) || Files.size(path) == 0)) {
             throw new IllegalStateException("AUDIO_ARTIFACT_INVALID");
         }
-        String checksum = path == null ? sha256(audioPath) : sha256(Files.readAllBytes(path));
+        String checksum = path == null ? VideoAnalysisChecksums.sha256(audioPath)
+                : VideoAnalysisChecksums.sha256(Files.readAllBytes(path));
         if (completed != null && !checksum.equals(completed.getChecksum())) {
             throw new IllegalStateException("AUDIO_REEXTRACT_CHECKSUM_CHANGED");
         }
@@ -215,36 +190,6 @@ public class VideoAnalysisHandler implements ProcessingTaskHandler {
             return objectMapper.writeValueAsString(value);
         } catch (Exception failure) {
             throw new IllegalStateException("VIDEO_CHECKPOINT_JSON_FAILED", failure);
-        }
-    }
-
-    private static String asrChecksum(AsrResult value) {
-        StringBuilder joined = new StringBuilder(safe(value.getLanguage())).append(':').append(safe(value.getText()));
-        for (AsrSegmentResult segment : value.getSegments()) {
-            joined.append(':').append(segment.startMs()).append(':').append(segment.endMs()).append(':')
-                    .append(safe(segment.text())).append(':').append(segment.speakerId());
-        }
-        return sha256(joined.toString());
-    }
-
-    private static String ocrChecksum(List<OcrObservation> values) {
-        StringBuilder joined = new StringBuilder();
-        for (OcrObservation value : values) {
-            joined.append(':').append(value.startMs()).append(':').append(value.endMs()).append(':')
-                    .append(safe(value.text())).append(':').append(value.confidence());
-        }
-        return sha256(joined.toString());
-    }
-
-    private static String sha256(String value) {
-        return sha256(value.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static String sha256(byte[] value) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
-        } catch (Exception impossible) {
-            throw new IllegalStateException(impossible);
         }
     }
 

@@ -1,6 +1,5 @@
 package com.videomind.module.task.analysis.ocr;
 
-import com.videomind.config.OcrProperties;
 import com.videomind.module.knowledge.timeline.TimelineFusionService.OcrObservation;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.service.TaskCancellationGuard;
@@ -9,20 +8,17 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 @Service
 public class VideoKeyframeOcrService {
     private final KeyframeExtractor extractor;
     private final FrameOcrClient ocrClient;
-    private final OcrProperties properties;
     private final TaskCancellationGuard cancellation;
 
-    public VideoKeyframeOcrService(KeyframeExtractor extractor, FrameOcrClient ocrClient, OcrProperties properties,
+    public VideoKeyframeOcrService(KeyframeExtractor extractor, FrameOcrClient ocrClient,
                                    TaskCancellationGuard cancellation) {
         this.extractor = extractor;
         this.ocrClient = ocrClient;
-        this.properties = properties;
         this.cancellation = cancellation;
     }
 
@@ -34,11 +30,10 @@ public class VideoKeyframeOcrService {
                 cancellation.checkVideoTask(taskRecord.getId());
                 FrameOcrClient.OcrText result = ocrClient.recognize(frame.imagePath());
                 cancellation.checkVideoTask(taskRecord.getId());
-                if (StringUtils.hasText(result.text())) {
-                    observations.add(new OcrObservation(frame.timestampMs(),
-                            frame.timestampMs() + properties.getMaxIntervalSeconds() * 1_000L,
-                            result.text(), result.confidence()));
-                }
+                String text = result == null || result.text() == null ? "" : result.text();
+                double confidence = result == null ? 0 : result.confidence();
+                observations.add(new OcrObservation(frame.timestampMs(), frame.timestampMs(),
+                        text, confidence));
             } finally {
                 try {
                     Files.deleteIfExists(frame.imagePath());

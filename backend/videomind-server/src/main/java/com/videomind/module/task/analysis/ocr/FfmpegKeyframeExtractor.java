@@ -14,8 +14,10 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -62,7 +64,6 @@ public class FfmpegKeyframeExtractor implements KeyframeExtractor {
             try (var stream = Files.list(frameDir)) {
                 images = stream.filter(path -> path.getFileName().toString().matches("frame-\\d{6}\\.jpg"))
                         .sorted(Comparator.comparing(Path::toString))
-                        .limit(ocr.getMaxFrames())
                         .toList();
             }
             List<Keyframe> frames = new ArrayList<>();
@@ -72,7 +73,15 @@ public class FfmpegKeyframeExtractor implements KeyframeExtractor {
                         : (long) index * ocr.getMaxIntervalSeconds() * 1_000;
                 frames.add(new Keyframe(timestamp, images.get(index)));
             }
-            return List.copyOf(frames);
+            List<Keyframe> retained = retainCoverage(frames,
+                    Math.multiplyExact(ocr.getMaxIntervalSeconds(), 1_000L), ocr.getMaxFrames());
+            Set<Path> retainedPaths = new HashSet<>(retained.stream().map(Keyframe::imagePath).toList());
+            for (Keyframe frame : frames) {
+                if (!retainedPaths.contains(frame.imagePath())) {
+                    Files.deleteIfExists(frame.imagePath());
+                }
+            }
+            return retained;
         } catch (BizException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -85,8 +94,35 @@ public class FfmpegKeyframeExtractor implements KeyframeExtractor {
                 "select='isnan(prev_selected_t)+gt(scene,%.3f)+gte(t-prev_selected_t,%d)',showinfo",
                 ocr.getSceneThreshold(), ocr.getMaxIntervalSeconds());
         return List.of(ffmpeg.getBinaryPath(), "-y", "-i", input.toString(), "-vf", filter,
-                "-fps_mode", "vfr", "-frames:v", Integer.toString(ocr.getMaxFrames()),
-                "-q:v", "2", outputPattern.toString());
+                "-fps_mode", "vfr", "-q:v", "2", outputPattern.toString());
+    }
+
+    /**
+     * Keeps bounded scene-change extras without ever dropping the periodic coverage guarantee.
+     * Once the scene budget is exhausted, the next candidate at least one max interval away is retained.
+     */
+    static List<Keyframe> retainCoverage(List<Keyframe> candidates, long maxIntervalMs, int maxSceneFrames) {
+        if (candidates == null || candidates.isEmpty()) {
+            return List.of();
+        }
+        List<Keyframe> ordered = candidates.stream().filter(java.util.Objects::nonNull)
+                .sorted(Comparator.comparingLong(Keyframe::timestampMs))
+                .toList();
+        List<Keyframe> retained = new ArrayList<>();
+        long lastRetainedMs = Long.MIN_VALUE;
+        int sceneFrames = 0;
+        for (Keyframe candidate : ordered) {
+            boolean coverageRequired = retained.isEmpty()
+                    || candidate.timestampMs() - lastRetainedMs >= maxIntervalMs;
+            if (coverageRequired || sceneFrames < Math.max(0, maxSceneFrames)) {
+                retained.add(candidate);
+                lastRetainedMs = candidate.timestampMs();
+                if (!coverageRequired) {
+                    sceneFrames++;
+                }
+            }
+        }
+        return List.copyOf(retained);
     }
 
     static List<Long> parseTimestamps(String log) {

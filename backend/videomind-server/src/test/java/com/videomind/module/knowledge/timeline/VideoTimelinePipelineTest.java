@@ -8,46 +8,52 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.videomind.module.task.analysis.dto.AsrResult;
-import com.videomind.module.task.analysis.dto.AsrSegmentResult;
-import com.videomind.module.task.analysis.ocr.VideoKeyframeOcrService;
+import com.videomind.config.OcrProperties;
+import com.videomind.module.knowledge.timeline.TimelineFusionService.AsrSegment;
+import com.videomind.module.knowledge.timeline.TimelineFusionService.OcrObservation;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.video.entity.VideoFile;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class VideoTimelinePipelineTest {
-    private final VideoKeyframeOcrService ocr = mock(VideoKeyframeOcrService.class);
     private final VideoTimelineMaterializer materializer = mock(VideoTimelineMaterializer.class);
     private final TimelineKnowledgeIndexer indexer = mock(TimelineKnowledgeIndexer.class);
-    private final VideoTimelinePipeline pipeline = new VideoTimelinePipeline(ocr, materializer, indexer);
+    private final VideoTimelinePipeline pipeline = new VideoTimelinePipeline(new TimelineFusionService(),
+            new OcrProperties(), materializer, indexer);
 
     @Test
-    void degradesToSpeechOnlyTimelineWhenLocalOcrFails() {
+    void producesOneCanonicalFusionForPersistenceIndexingAndSummary() {
         TaskRecord task = task();
         VideoFile video = video();
-        AsrResult asr = AsrResult.builder().text("第一句").segments(List.of(
-                new AsrSegmentResult(100, 900, "第一句", 0))).build();
-        var timeline = mock(VideoTimelineMaterializer.MaterializedTimeline.class);
+        FusedVideoContent content = pipeline.fuse(video,
+                List.of(new AsrSegment(100, 900, "第一句", 1.0)),
+                List.of(new OcrObservation(200, 700, "架构图", 0.9)), false);
+
+        assertThat(content.markdown()).contains("语音：第一句", "画面文字：架构图");
+        assertThat(content.timeline().speechBlocks()).hasSize(1);
+        assertThat(content.timeline().visualSpans()).hasSize(1);
+        assertThat(content.asrSegmentCount()).isEqualTo(1);
+        assertThat(content.ocrObservationCount()).isEqualTo(1);
+        assertThat(content.ocrDegraded()).isFalse();
+
+        var materialized = new VideoTimelineMaterializer.MaterializedTimeline(1L, content.timeline(),
+                content.markdown(), "bucket", "timeline.md", "events.json");
         var indexed = new TimelineKnowledgeIndexer.IndexedTimeline(1L, 2L, 3L, 1);
-        when(ocr.recognize(video, task)).thenThrow(new IllegalStateException("OCR offline"));
-        when(materializer.materialize(eq(9L), eq(5L), eq(7L), eq(2), eq("demo.mp4"), any(), eq(List.of())))
-                .thenReturn(timeline);
-        when(indexer.index(7L, 5L, "demo.mp4", 2, timeline)).thenReturn(indexed);
+        when(materializer.materialize(9L, 5L, 7L, 2, content)).thenReturn(materialized);
+        when(indexer.index(7L, 5L, "demo.mp4", 2, materialized)).thenReturn(indexed);
 
-        var result = pipeline.build(task, video, 2, asr);
-
-        assertThat(result).contains(indexed);
-        verify(materializer).materialize(eq(9L), eq(5L), eq(7L), eq(2), eq("demo.mp4"),
-                eq(List.of(new TimelineFusionService.AsrSegment(100, 900, "第一句", 1.0))), eq(List.of()));
+        assertThat(pipeline.materializeAndIndex(task, video, 2, content)).contains(indexed);
+        verify(materializer).materialize(9L, 5L, 7L, 2, content);
     }
 
     @Test
-    void skipsLegacyTranscriptWithoutTimestamps() {
-        var result = pipeline.build(task(), video(), 1, AsrResult.builder().text("旧转录").build());
-        assertThat(result).isEmpty();
-        verify(ocr, never()).recognize(any(), any());
-        verify(materializer, never()).materialize(any(), any(), any(), any(Integer.class), any(), any(), any());
+    void skipsTimelineWhenNeitherBranchHasUsableEvents() {
+        FusedVideoContent content = pipeline.fuse(video(), List.of(), List.of(), true);
+
+        assertThat(pipeline.materializeAndIndex(task(), video(), 1, content)).isEmpty();
+        verify(materializer, never()).materialize(any(), any(), any(), any(Integer.class), any());
+        verify(indexer, never()).index(any(), any(), any(), any(Integer.class), any());
     }
 
     private TaskRecord task() {
@@ -62,6 +68,7 @@ class VideoTimelinePipelineTest {
         VideoFile video = new VideoFile();
         video.setId(5L);
         video.setOriginalFilename("demo.mp4");
+        video.setDurationSeconds(30);
         return video;
     }
 }

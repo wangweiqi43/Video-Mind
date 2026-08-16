@@ -59,6 +59,9 @@ management:
       show-details: never
 
 videomind:
+  analysis:
+    branch-threads: ${VIDEO_ANALYSIS_BRANCH_THREADS:2}
+    branch-queue-capacity: ${VIDEO_ANALYSIS_BRANCH_QUEUE_CAPACITY:8}
   agent:
     workflow:
       decision-timeout-millis: ${AGENT_DECISION_TIMEOUT_MILLIS:10000}
@@ -91,7 +94,7 @@ videomind:
     mode: ${VIDEOMIND_OCR_MODE:local}
     endpoint: ${LOCAL_OCR_ENDPOINT:http://127.0.0.1:8868/ocr}
     scene-threshold: ${OCR_SCENE_THRESHOLD:0.30}
-    max-interval-seconds: ${OCR_MAX_INTERVAL_SECONDS:10}
+    max-interval-seconds: ${OCR_MAX_INTERVAL_SECONDS:30}
     max-frames: ${OCR_MAX_FRAMES:300}
     timeout-seconds: ${OCR_TIMEOUT_SECONDS:60}
   knowledge:
@@ -154,7 +157,7 @@ videomind:
       endpoint: ${SUMMARY_API_ENDPOINT:https://api.siliconflow.cn/v1/chat/completions}
       api-key: "${SUMMARY_API_KEY:${SILICONFLOW_API_KEY:}}"
       model: ${SUMMARY_MODEL:deepseek-ai/DeepSeek-V4-Flash}
-      prompt-version: ${SUMMARY_PROMPT_VERSION:summary-v3}
+      prompt-version: ${SUMMARY_PROMPT_VERSION:summary-v6-layered-fusion}
       timeout-seconds: ${SUMMARY_TIMEOUT_SECONDS:120}
     embedding:
       mode: ${VIDEOMIND_EMBEDDING_MODE:real}

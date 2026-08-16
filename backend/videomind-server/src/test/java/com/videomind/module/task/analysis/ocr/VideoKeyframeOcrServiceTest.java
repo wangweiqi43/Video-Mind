@@ -7,7 +7,7 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
-import com.videomind.config.OcrProperties;
+import com.videomind.module.knowledge.timeline.TimelineFusionService.OcrObservation;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.task.service.TaskCancellationGuard;
 import com.videomind.module.task.service.TaskCancellationException;
@@ -23,25 +23,37 @@ class VideoKeyframeOcrServiceTest {
     Path tempDir;
 
     @Test
-    void mapsFrameTimestampToObservationWindowAndRemovesFrame() throws Exception {
+    void mapsFrameTimestampToPointSampleAndRemovesFrame() throws Exception {
         Path image = tempDir.resolve("frame.jpg");
         Files.write(image, new byte[]{1});
         KeyframeExtractor extractor = mock(KeyframeExtractor.class);
         when(extractor.extract(any(), any())).thenReturn(List.of(new Keyframe(4_250, image)));
         FrameOcrClient client = mock(FrameOcrClient.class);
         when(client.recognize(image)).thenReturn(new FrameOcrClient.OcrText("架构总览", 0.93));
-        OcrProperties properties = new OcrProperties();
-        properties.setMaxIntervalSeconds(8);
-        var service = new VideoKeyframeOcrService(extractor, client, properties,
-                mock(TaskCancellationGuard.class));
+        var service = new VideoKeyframeOcrService(extractor, client, mock(TaskCancellationGuard.class));
 
         var observations = service.recognize(new VideoFile(), new TaskRecord());
 
         assertThat(observations).hasSize(1);
         assertThat(observations.get(0).startMs()).isEqualTo(4_250);
-        assertThat(observations.get(0).endMs()).isEqualTo(12_250);
+        assertThat(observations.get(0).endMs()).isEqualTo(4_250);
         assertThat(observations.get(0).text()).isEqualTo("架构总览");
         assertThat(image).doesNotExist();
+    }
+
+    @Test
+    void preservesBlankOcrAsAWindowBoundary() throws Exception {
+        Path image = tempDir.resolve("blank-frame.jpg");
+        Files.write(image, new byte[]{1});
+        KeyframeExtractor extractor = mock(KeyframeExtractor.class);
+        when(extractor.extract(any(), any())).thenReturn(List.of(new Keyframe(30_000, image)));
+        FrameOcrClient client = mock(FrameOcrClient.class);
+        when(client.recognize(image)).thenReturn(new FrameOcrClient.OcrText("", 0.1));
+        var service = new VideoKeyframeOcrService(extractor, client, mock(TaskCancellationGuard.class));
+
+        var observations = service.recognize(new VideoFile(), new TaskRecord());
+
+        assertThat(observations).containsExactly(new OcrObservation(30_000, 30_000, "", 0.1));
     }
 
     @Test
@@ -54,7 +66,7 @@ class VideoKeyframeOcrServiceTest {
         when(client.recognize(image)).thenReturn(new FrameOcrClient.OcrText("不应落库", 0.9));
         TaskCancellationGuard cancellation = mock(TaskCancellationGuard.class);
         doNothing().doThrow(new TaskCancellationException()).when(cancellation).checkVideoTask(9L);
-        var service = new VideoKeyframeOcrService(extractor, client, new OcrProperties(), cancellation);
+        var service = new VideoKeyframeOcrService(extractor, client, cancellation);
         TaskRecord task = new TaskRecord();
         task.setId(9L);
 

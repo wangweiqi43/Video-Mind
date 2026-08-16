@@ -5,7 +5,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,9 +18,7 @@ import org.junit.jupiter.api.Test;
 
 class VideoTimelineMaterializerTest {
     @Test
-    void persistsRawObservationsAndDeterministicMarkdownAndJsonArtifacts() {
-        VideoAsrSegmentMapper asr = mock(VideoAsrSegmentMapper.class);
-        VideoOcrObservationMapper ocr = mock(VideoOcrObservationMapper.class);
+    void persistsTheExactPrefusedMarkdownAndJsonArtifacts() {
         VideoTimelineMapper timelines = mock(VideoTimelineMapper.class);
         ObjectStorageService storage = mock(ObjectStorageService.class);
         AtomicReference<VideoTimeline> saved = new AtomicReference<>();
@@ -33,19 +30,20 @@ class VideoTimelineMaterializerTest {
             saved.set(value);
             return 1;
         });
-        VideoTimelineMaterializer service = new VideoTimelineMaterializer(new TimelineFusionService(), asr, ocr,
-                timelines, storage, new ObjectMapper());
+        TimelineFusionService fusion = new TimelineFusionService();
+        var timeline = fusion.fuse(List.of(new AsrSegment(0, 3_000, "事务消息", 0.9)),
+                List.of(new OcrObservation(500, 500, "RocketMQ", 0.95)), 3_000, 30_000);
+        String markdown = fusion.renderMarkdown(timeline, "课程视频 · 时间轴");
+        FusedVideoContent content = new FusedVideoContent("课程视频", timeline, markdown, 1, 1, false);
+        VideoTimelineMaterializer service = new VideoTimelineMaterializer(timelines, storage, new ObjectMapper());
 
-        var result = service.materialize(9L, 12L, 7L, 3, "课程视频",
-                List.of(new AsrSegment(0, 3_000, "事务消息", 0.9)),
-                List.of(new OcrObservation(500, 2_000, "RocketMQ", 0.95)));
+        var result = service.materialize(9L, 12L, 7L, 3, content);
 
         assertThat(result.timelineId()).isEqualTo(55L);
-        assertThat(result.markdown()).contains("课程视频 · 时间轴", "语音：事务消息", "画面文字：RocketMQ");
+        assertThat(result.markdown()).isEqualTo(markdown)
+                .contains("课程视频 · 时间轴", "语音：事务消息", "画面文字：RocketMQ");
         assertThat(result.markdownObjectKey()).isEqualTo("knowledge/video/7/12/timeline/v3/timeline.md");
         assertThat(result.eventJsonObjectKey()).isEqualTo("knowledge/video/7/12/timeline/v3/events.json");
         assertThat(saved.get().getStatus()).isEqualTo("READY");
-        verify(asr).upsert(any(VideoAsrSegment.class));
-        verify(ocr).upsert(any(VideoOcrObservation.class));
     }
 }

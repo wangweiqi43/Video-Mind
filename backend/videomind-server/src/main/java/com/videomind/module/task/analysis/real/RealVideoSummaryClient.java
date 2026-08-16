@@ -6,8 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.videomind.common.exception.BizException;
 import com.videomind.config.AiProperties;
 import com.videomind.infrastructure.ai.AiApiSupport;
+import com.videomind.module.knowledge.timeline.FusedVideoContent;
 import com.videomind.module.task.analysis.VideoSummaryClient;
-import com.videomind.module.task.analysis.dto.AsrResult;
 import com.videomind.module.task.analysis.dto.SummaryResult;
 import com.videomind.module.task.entity.TaskRecord;
 import com.videomind.module.video.entity.VideoFile;
@@ -32,7 +32,7 @@ public class RealVideoSummaryClient implements VideoSummaryClient {
     private final ObjectMapper objectMapper;
 
     @Override
-    public SummaryResult summarize(AsrResult asrResult, VideoFile videoFile, TaskRecord taskRecord) {
+    public SummaryResult summarize(FusedVideoContent content, VideoFile videoFile, TaskRecord taskRecord) {
         AiProperties.ApiProvider summary = aiProperties.getSummary();
         AiApiSupport.requireConfigured("摘要大模型", summary);
 
@@ -40,24 +40,29 @@ public class RealVideoSummaryClient implements VideoSummaryClient {
                 .uri(summary.getEndpoint())
                 .headers(headers -> AiApiSupport.setBearerAuth(headers, summary.getApiKey()))
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(buildRequest(asrResult, videoFile, summary))
+                .body(buildRequest(content, videoFile, summary))
                 .retrieve()
                 .body(JsonNode.class);
 
-        String content = parseContent(response);
+        String summaryText = parseContent(response);
         return SummaryResult.builder()
-                .summaryText(content)
-                .summaryJson(toSummaryJson(content, summary.getModel(), response))
+                .summaryText(summaryText)
+                .summaryJson(toSummaryJson(summaryText, summary.getModel(), response))
                 .modelName(modelSignature(summary))
                 .build();
     }
 
-    private Map<String, Object> buildRequest(AsrResult asrResult, VideoFile videoFile, AiProperties.ApiProvider summary) {
+    Map<String, Object> buildRequest(FusedVideoContent content, VideoFile videoFile,
+                                     AiProperties.ApiProvider summary) {
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of(
                 "role", "system",
                 "content", """
-                        你是 VideoMind 的视频理解助手。请只基于用户提供的视频转录文本生成结构化摘要。
+                        你是 VideoMind 的视频理解助手。请只基于用户提供的融合视频时间线生成结构化摘要。
+                        时间线由相互独立的“语音区间”和“画面区间”组成。“语音”来自 ASR，
+                        “画面文字”来自视频帧 OCR。画面文字在其画面区间内持续有效，但每个相似画面只提供一次，
+                        不得把同一画面文字重复扩写到该区间内的每个语音段。以语音为主要叙事依据，使用画面文字
+                        补充标题、专有名词、代码和演示内容；两者冲突时保留不确定性，禁止臆断。
 
                         输出必须严格遵守以下 Markdown 格式：
 
@@ -80,6 +85,7 @@ public class RealVideoSummaryClient implements VideoSummaryClient {
                         4. 根据视频内容输出 3 到 6 个要点标题。
                         5. 不要输出“可行动结论”“总结”“其他”等额外章节。
                         6. 不要输出项目符号列表，不要输出编号列表，只使用上述三级标题和段落。
+                        7. 不要在摘要中声称看到了时间线未提供的画面、人物、动作或文档内容。
                         """
         ));
         messages.add(Map.of(
@@ -87,9 +93,9 @@ public class RealVideoSummaryClient implements VideoSummaryClient {
                 "content", """
                         视频文件：%s
 
-                        转录文本：
+                        融合视频时间线：
                         %s
-                        """.formatted(videoFile.getOriginalFilename(), asrResult.getText())
+                        """.formatted(videoFile.getOriginalFilename(), content.markdown())
         ));
 
         Map<String, Object> request = new LinkedHashMap<>();

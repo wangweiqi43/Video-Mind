@@ -6,11 +6,12 @@ import com.videomind.config.FfmpegProperties;
 import com.videomind.config.OcrProperties;
 import com.videomind.infrastructure.storage.ObjectStorageService;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class FfmpegKeyframeExtractorTest {
     @Test
-    void buildsSceneChangeCommandWithHeartbeatAndFrameLimit() {
+    void buildsSceneChangeCommandWithHeartbeatWithoutTruncatingCoverage() {
         FfmpegProperties ffmpeg = new FfmpegProperties();
         OcrProperties ocr = new OcrProperties();
         ocr.setSceneThreshold(0.42);
@@ -20,9 +21,21 @@ class FfmpegKeyframeExtractorTest {
 
         var command = extractor.command(Path.of("input.mp4"), Path.of("frame-%06d.jpg"));
 
-        assertThat(command).contains("-fps_mode", "vfr", "-frames:v", "25");
+        assertThat(command).contains("-fps_mode", "vfr").doesNotContain("-frames:v");
         assertThat(command.get(command.indexOf("-vf") + 1))
                 .contains("gt(scene,0.420)", "gte(t-prev_selected_t,8)", "showinfo");
+    }
+
+    @Test
+    void limitsExtraSceneFramesButRetainsThirtySecondCoverageAfterBudgetIsExhausted() {
+        List<Keyframe> candidates = java.util.stream.LongStream.rangeClosed(0, 100)
+                .mapToObj(second -> new Keyframe(second * 1_000, Path.of("frame-" + second + ".jpg")))
+                .toList();
+
+        List<Keyframe> retained = FfmpegKeyframeExtractor.retainCoverage(candidates, 30_000, 2);
+
+        assertThat(retained).extracting(Keyframe::timestampMs)
+                .containsExactly(0L, 1_000L, 2_000L, 32_000L, 62_000L, 92_000L);
     }
 
     @Test
