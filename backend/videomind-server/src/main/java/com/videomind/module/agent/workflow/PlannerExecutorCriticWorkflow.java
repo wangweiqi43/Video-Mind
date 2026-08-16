@@ -11,7 +11,6 @@ import com.videomind.module.agent.workflow.AgentWorkflowModels.StepResult;
 import com.videomind.module.agent.workflow.AgentWorkflowModels.Verdict;
 import com.videomind.module.knowledge.retrieval.Evidence;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -160,12 +159,12 @@ public class PlannerExecutorCriticWorkflow {
     }
 
     private List<Evidence> selectAccepted(List<StepResult> audit, List<String> acceptedIds) {
-        LinkedHashMap<String, Evidence> byId = new LinkedHashMap<>();
-        audit.forEach(result -> result.evidence().forEach(value -> byId.putIfAbsent(value.evidenceId(), value)));
+        Set<String> accepted = new LinkedHashSet<>(acceptedIds);
         List<Evidence> values = new ArrayList<>();
-        for (String id : acceptedIds) {
-            Evidence value = byId.get(id);
-            if (value != null && values.size() < maxAcceptedEvidence()) values.add(value);
+        for (Evidence value : EvidenceRankFusion.fuse(audit)) {
+            if (accepted.contains(value.evidenceId()) && values.size() < maxAcceptedEvidence()) {
+                values.add(value);
+            }
         }
         return List.copyOf(values);
     }

@@ -248,7 +248,7 @@ public class ElasticsearchGateway implements HybridSearchGateway, KnowledgeIndex
         return source;
     }
 
-    private List<RetrievalCandidate> parseHits(JsonNode response) {
+    static List<RetrievalCandidate> parseHits(JsonNode response) {
         List<RetrievalCandidate> values = new ArrayList<>();
         for (JsonNode hit : response.path("hits").path("hits")) {
             JsonNode source = hit.path("_source");
@@ -262,7 +262,7 @@ public class ElasticsearchGateway implements HybridSearchGateway, KnowledgeIndex
                     source.path("parentIndex").asInt(), source.path("title").asText(null),
                     source.path("heading").asText(null), source.path("content").asText(""),
                     source.path("parentContent").asText(""), nullableLong(source, "startMs"),
-                    nullableLong(source, "endMs")));
+                    nullableLong(source, "endMs"), hit.path("_score").asDouble(0)));
         }
         return List.copyOf(values);
     }

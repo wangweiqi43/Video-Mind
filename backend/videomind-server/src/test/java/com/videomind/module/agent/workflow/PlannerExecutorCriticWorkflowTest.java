@@ -83,8 +83,11 @@ class PlannerExecutorCriticWorkflowTest {
 
         assertThat(result.status()).isEqualTo(Status.COMPLETED);
         assertThat(result.replans()).isEqualTo(1);
-        assertThat(result.candidates()).containsExactly(original, rewritten);
-        assertThat(result.evidence()).containsExactly(original);
+        assertThat(result.candidates()).extracting(Evidence::evidenceId)
+                .containsExactly("original", "rewritten");
+        assertThat(result.candidates()).extracting(Evidence::finalScore)
+                .isSortedAccordingTo(java.util.Comparator.reverseOrder());
+        assertThat(result.evidence()).extracting(Evidence::evidenceId).containsExactly("original");
         verify(executor, times(2)).execute(any(), any());
     }
 

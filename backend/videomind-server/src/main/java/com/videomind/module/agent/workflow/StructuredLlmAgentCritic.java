@@ -133,9 +133,7 @@ public class StructuredLlmAgentCritic {
     }
 
     private List<Evidence> distinct(List<StepResult> results) {
-        LinkedHashMap<String, Evidence> values = new LinkedHashMap<>();
-        results.forEach(result -> result.evidence().forEach(value -> values.putIfAbsent(value.evidenceId(), value)));
-        return List.copyOf(values.values());
+        return EvidenceRankFusion.fuse(results);
     }
 
     private List<String> strings(JsonNode source) {

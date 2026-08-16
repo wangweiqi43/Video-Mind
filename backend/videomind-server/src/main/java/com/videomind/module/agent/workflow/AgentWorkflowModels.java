@@ -2,7 +2,6 @@ package com.videomind.module.agent.workflow;
 
 import com.videomind.module.knowledge.retrieval.Evidence;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 
@@ -185,14 +184,7 @@ public final class AgentWorkflowModels {
         }
 
         public static List<Evidence> distinctEvidence(List<StepResult> steps) {
-            List<Evidence> values = new ArrayList<>();
-            LinkedHashSet<String> ids = new LinkedHashSet<>();
-            for (StepResult step : steps) {
-                for (Evidence evidence : step.evidence()) {
-                    if (evidence != null && ids.add(evidence.evidenceId())) values.add(evidence);
-                }
-            }
-            return List.copyOf(values);
+            return EvidenceRankFusion.fuse(steps);
         }
     }
 }

@@ -7,9 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -99,24 +97,10 @@ public class HybridRetrievalService {
     }
 
     private List<Ranked> rrf(List<RetrievalCandidate> keyword, List<RetrievalCandidate> semantic) {
-        Map<RetrievalCandidate, Double> scores = new LinkedHashMap<>();
-        accumulate(scores, keyword);
-        accumulate(scores, semantic);
-        return scores.entrySet().stream()
-                .map(entry -> new Ranked(entry.getKey(), entry.getValue()))
-                .sorted(Comparator.comparingDouble(Ranked::rrfScore).reversed()
-                        .thenComparing(value -> value.candidate().embeddingId()))
+        return VideoMindReciprocalRankFuser.fuse(List.of(keyword, semantic), RRF_K, RECALL_LIMIT,
+                        RetrievalCandidate::chunkId, RetrievalCandidate::retrievalScore).stream()
+                .map(value -> new Ranked(value.content(), value.rrfScore()))
                 .toList();
-    }
-
-    private void accumulate(Map<RetrievalCandidate, Double> scores, List<RetrievalCandidate> candidates) {
-        int limit = Math.min(RECALL_LIMIT, candidates.size());
-        for (int index = 0; index < limit; index++) {
-            RetrievalCandidate candidate = candidates.get(index);
-            if (candidate != null) {
-                scores.merge(candidate, 1.0 / (RRF_K + index + 1), Double::sum);
-            }
-        }
     }
 
     private boolean validRerankScores(List<RerankClient.RerankScore> scores, int candidateCount) {

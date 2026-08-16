@@ -64,6 +64,27 @@ class HybridRetrievalServiceTest {
     }
 
     @Test
+    void rerankInputIsUniqueAndOrderedByAccumulatedRrfScore() {
+        HybridSearchGateway gateway = new HybridSearchGateway() {
+            public List<RetrievalCandidate> keywordSearch(Long user, List<Long> scope, String query, int limit) {
+                return List.of(scoredCandidate("shared", 0.2), scoredCandidate("keyword", 0.9),
+                        scoredCandidate("shared", 0.8));
+            }
+
+            public List<RetrievalCandidate> vectorSearch(Long user, List<Long> scope, float[] vector, int limit) {
+                return List.of(scoredCandidate("shared", 0.7), scoredCandidate("vector", 0.95));
+            }
+        };
+        RecordingReranker reranker = new RecordingReranker();
+
+        new HybridRetrievalService(text -> new float[] {1}, gateway, reranker, new SimpleMeterRegistry())
+                .retrieve(7L, List.of(11L), "question");
+
+        assertThat(reranker.documents).containsExactly(
+                "content-shared", "content-vector", "content-keyword");
+    }
+
+    @Test
     void degradesToKnnWhenBm25Fails() {
         SimpleMeterRegistry metrics = new SimpleMeterRegistry();
         HybridSearchGateway gateway = new HybridSearchGateway() {
@@ -157,6 +178,11 @@ class HybridRetrievalServiceTest {
         return new RetrievalCandidate(id, 11L, 21L, 31L, index, index / 2,
                 "title", "heading", "content-" + id, "parent-" + index,
                 (long) index * 1000, (long) (index + 1) * 1000);
+    }
+
+    private static RetrievalCandidate scoredCandidate(String id, double score) {
+        return new RetrievalCandidate(id, 11L, 21L, 31L, 0, 0,
+                "title", "heading", "content-" + id, "parent", null, null, score);
     }
 
     private static class RecordingGateway implements HybridSearchGateway {

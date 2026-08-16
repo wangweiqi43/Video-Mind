@@ -47,4 +47,19 @@ class ElasticsearchProtocolTest {
                 .containsExactly(new RerankClient.RerankScore(2, 0.9),
                         new RerankClient.RerankScore(0, 0.7));
     }
+
+    @Test
+    void retrievalHitKeepsElasticsearchNativeScoreForPreRrfOrdering() throws Exception {
+        var response = mapper.readTree("""
+                {"hits":{"hits":[{
+                  "_id":"chunk-1","_score":7.25,
+                  "_source":{"embeddingId":"chunk-1","content":"正文","chunkIndex":1}
+                }]}}
+                """);
+
+        assertThat(ElasticsearchGateway.parseHits(response)).singleElement().satisfies(candidate -> {
+            assertThat(candidate.chunkId()).isEqualTo("chunk-1");
+            assertThat(candidate.retrievalScore()).isEqualTo(7.25);
+        });
+    }
 }

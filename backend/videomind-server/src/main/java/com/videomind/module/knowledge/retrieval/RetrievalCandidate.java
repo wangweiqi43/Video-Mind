@@ -15,10 +15,18 @@ public final class RetrievalCandidate {
     private final String parentContent;
     private final Long startMs;
     private final Long endMs;
+    private final double retrievalScore;
 
     public RetrievalCandidate(String embeddingId, Long knowledgeBaseId, Long documentId,
             Long documentVersionId, int chunkIndex, int parentIndex, String title, String heading,
             String content, String parentContent, Long startMs, Long endMs) {
+        this(embeddingId, knowledgeBaseId, documentId, documentVersionId, chunkIndex, parentIndex,
+                title, heading, content, parentContent, startMs, endMs, 0);
+    }
+
+    public RetrievalCandidate(String embeddingId, Long knowledgeBaseId, Long documentId,
+            Long documentVersionId, int chunkIndex, int parentIndex, String title, String heading,
+            String content, String parentContent, Long startMs, Long endMs, double retrievalScore) {
         this.embeddingId = Objects.requireNonNull(embeddingId, "embeddingId");
         this.knowledgeBaseId = knowledgeBaseId;
         this.documentId = documentId;
@@ -31,9 +39,15 @@ public final class RetrievalCandidate {
         this.parentContent = parentContent;
         this.startMs = startMs;
         this.endMs = endMs;
+        this.retrievalScore = Double.isFinite(retrievalScore) ? retrievalScore : 0;
     }
 
     public String embeddingId() {
+        return embeddingId;
+    }
+
+    /** Stable logical chunk identity shared by BM25, kNN and rewritten-query retrieval. */
+    public String chunkId() {
         return embeddingId;
     }
 
@@ -81,14 +95,18 @@ public final class RetrievalCandidate {
         return endMs;
     }
 
+    public double retrievalScore() {
+        return retrievalScore;
+    }
+
     @Override
     public boolean equals(Object other) {
         return this == other || other instanceof RetrievalCandidate candidate
-                && embeddingId.equals(candidate.embeddingId);
+                && chunkId().equals(candidate.chunkId());
     }
 
     @Override
     public int hashCode() {
-        return embeddingId.hashCode();
+        return chunkId().hashCode();
     }
 }
