@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { decodeChatDelta, decodeWorkflowEvent } from '../src/chatStream.js'
-import { normalizeHistoryMessages, sessionPreview, sessionTitle } from '../src/chatHistory.js'
+import { failAssistantMessage, normalizeHistoryMessages, sessionPreview, sessionTitle } from '../src/chatHistory.js'
 import { normalizeMarkdownForRendering, renderSafeMarkdown } from '../src/safeMarkdown.js'
 
 test('decodes JSON-wrapped whitespace deltas and keeps legacy text events', () => {
@@ -97,4 +97,15 @@ test('uses safe fallbacks for incomplete local session metadata', () => {
   assert.equal(sessionTitle({}), '新会话')
   assert.equal(sessionPreview({ lastMessagePreview: ' 最新回答 ' }), '最新回答')
   assert.equal(sessionPreview({}), '点击查看并继续对话')
+})
+
+test('recovers a streaming answer into an explicit retryable failure state', () => {
+  const message = { content: '', streaming: true, failed: false, workflowStatus: '正在检索' }
+  failAssistantMessage(message)
+  assert.deepEqual(message, {
+    content: '回答未完成，请稍后重试。',
+    streaming: false,
+    failed: true,
+    workflowStatus: ''
+  })
 })

@@ -1,22 +1,56 @@
 import axios from 'axios'
-import { decodeChatDelta, decodeWorkflowEvent } from './chatStream'
+import { decodeChatDelta, decodeWorkflowEvent } from './chatStream.js'
 
-const http = axios.create({
-  baseURL: '/api',
-  timeout: 120000,
-  withCredentials: true
-})
+const AUTH_ROUTES = /\/auth\/(?:login|register|refresh|logout)(?:\?|$)/
 
-http.interceptors.response.use((response) => {
-  const payload = response.data
-  if (payload && payload.code !== 0) {
-    return Promise.reject(new Error(payload.message || '请求失败'))
-  }
-  return payload.data
-}, (error) => {
+function requestError(error) {
   const message = error.response?.data?.message || error.message || '请求失败'
-  return Promise.reject(new Error(message))
-})
+  return new Error(message)
+}
+
+export function createHttpClient(options = {}) {
+  const client = axios.create({
+    baseURL: '/api',
+    timeout: 120000,
+    withCredentials: true,
+    ...options
+  })
+  let refreshRequest = null
+
+  client.interceptors.response.use((response) => {
+    const payload = response.data
+    if (payload && payload.code !== 0) {
+      return Promise.reject(new Error(payload.message || '请求失败'))
+    }
+    return payload.data
+  }, async (error) => {
+    const status = error.response?.status
+    const config = error.config
+    const canRefresh = (status === 401 || status === 403)
+      && config
+      && !config.__vmSessionRetry
+      && !config.__vmSkipSessionRecovery
+      && !AUTH_ROUTES.test(config.url || '')
+
+    if (!canRefresh) return Promise.reject(requestError(error))
+
+    config.__vmSessionRetry = true
+    try {
+      if (!refreshRequest) {
+        refreshRequest = client.post('/auth/refresh', null, { __vmSkipSessionRecovery: true })
+          .finally(() => { refreshRequest = null })
+      }
+      await refreshRequest
+      return client.request(config)
+    } catch {
+      return Promise.reject(new Error('登录状态已过期，请重新登录'))
+    }
+  })
+
+  return client
+}
+
+const http = createHttpClient()
 
 export const api = {
   register(username, password) {
@@ -99,10 +133,16 @@ export const api = {
   createKnowledgeBase(name) {
     return http.post('/knowledge-bases', { name })
   },
-  uploadKnowledgeDocument(knowledgeBaseId, file, onUploadProgress) {
+  uploadKnowledgeDocument(knowledgeBaseId, file, idempotencyKey, onUploadProgress) {
     const form = new FormData()
     form.append('file', file)
-    return http.post(`/knowledge-bases/${knowledgeBaseId}/documents`, form, { onUploadProgress })
+    return http.post(`/knowledge-bases/${knowledgeBaseId}/documents`, form, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+      onUploadProgress
+    })
+  },
+  getProcessingTask(taskId) {
+    return http.get(`/processing-tasks/${taskId}`)
   },
   deleteKnowledgeBase(knowledgeBaseId) {
     return http.delete(`/knowledge-bases/${knowledgeBaseId}`)
@@ -119,26 +159,46 @@ function streamChatMessage(sessionId, videoId, question, answerScope, onDelta, w
     webSearchEnabled: String(Boolean(webSearchEnabled)),
     deepThinkingEnabled: String(Boolean(deepThinkingEnabled))
   })
-  return new Promise((resolve, reject) => {
-    const source = new EventSource(`/api/chat/message/stream?${params.toString()}`)
+  let source
+  let rejectStream
+  let settled = false
+  const stream = new Promise((resolve, reject) => {
+    rejectStream = reject
+    source = new EventSource(`/api/chat/message/stream?${params.toString()}`)
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      source.close()
+      callback(value)
+    }
     source.addEventListener('delta', (event) => {
+      if (settled) return
       onDelta(decodeChatDelta(event.data))
     })
     source.addEventListener('workflow', (event) => {
+      if (settled) return
       const workflow = decodeWorkflowEvent(event.data)
       if (workflow) onWorkflow(workflow)
     })
     source.addEventListener('done', (event) => {
-      source.close()
-      resolve(JSON.parse(event.data))
+      try {
+        finish(resolve, JSON.parse(event.data))
+      } catch {
+        finish(reject, new Error('流式响应格式错误'))
+      }
     })
     source.addEventListener('error', (event) => {
-      source.close()
-      reject(new Error(event.data || '流式响应失败'))
+      if (event.data) finish(reject, new Error(event.data))
     })
     source.onerror = () => {
-      source.close()
-      reject(new Error('流式连接失败'))
+      finish(reject, new Error('流式连接失败'))
     }
   })
+  stream.cancel = () => {
+    if (settled) return
+    settled = true
+    source?.close()
+    rejectStream?.(new Error('流式连接已关闭'))
+  }
+  return stream
 }

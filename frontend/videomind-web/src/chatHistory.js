@@ -30,3 +30,11 @@ export function sessionTitle(session) {
 export function sessionPreview(session) {
   return session?.lastMessagePreview?.trim() || '点击查看并继续对话'
 }
+
+export function failAssistantMessage(message, fallback = '回答未完成，请稍后重试。') {
+  message.streaming = false
+  message.failed = true
+  message.workflowStatus = ''
+  if (!message.content) message.content = fallback
+  return message
+}
