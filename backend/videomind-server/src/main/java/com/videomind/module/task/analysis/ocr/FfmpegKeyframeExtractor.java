@@ -66,15 +66,14 @@ public class FfmpegKeyframeExtractor implements KeyframeExtractor {
                         .sorted(Comparator.comparing(Path::toString))
                         .toList();
             }
+            if (timestamps.size() != images.size()) {
+                throw new BizException(500, "关键帧时间戳解析不完整：" + timestamps.size() + "/" + images.size());
+            }
             List<Keyframe> frames = new ArrayList<>();
             for (int index = 0; index < images.size(); index++) {
-                long timestamp = index < timestamps.size()
-                        ? timestamps.get(index)
-                        : (long) index * ocr.getMaxIntervalSeconds() * 1_000;
-                frames.add(new Keyframe(timestamp, images.get(index)));
+                frames.add(new Keyframe(timestamps.get(index), images.get(index)));
             }
-            List<Keyframe> retained = retainCoverage(frames,
-                    Math.multiplyExact(ocr.getMaxIntervalSeconds(), 1_000L), ocr.getMaxFrames());
+            List<Keyframe> retained = retainEvenly(frames, ocr.getMaxFrames());
             Set<Path> retainedPaths = new HashSet<>(retained.stream().map(Keyframe::imagePath).toList());
             for (Keyframe frame : frames) {
                 if (!retainedPaths.contains(frame.imagePath())) {
@@ -91,36 +90,33 @@ public class FfmpegKeyframeExtractor implements KeyframeExtractor {
 
     List<String> command(Path input, Path outputPattern) {
         String filter = String.format(Locale.ROOT,
-                "select='isnan(prev_selected_t)+gt(scene,%.3f)+gte(t-prev_selected_t,%d)',showinfo",
-                ocr.getSceneThreshold(), ocr.getMaxIntervalSeconds());
+                "select='isnan(prev_selected_t)+gt(scene,%.3f)',showinfo",
+                ocr.getSceneThreshold());
         return List.of(ffmpeg.getBinaryPath(), "-y", "-i", input.toString(), "-vf", filter,
                 "-fps_mode", "vfr", "-q:v", "2", outputPattern.toString());
     }
 
-    /**
-     * Keeps bounded scene-change extras without ever dropping the periodic coverage guarantee.
-     * Once the scene budget is exhausted, the next candidate at least one max interval away is retained.
-     */
-    static List<Keyframe> retainCoverage(List<Keyframe> candidates, long maxIntervalMs, int maxSceneFrames) {
+    /** Keeps the OCR budget bounded by sampling the complete ordered candidate sequence. */
+    static List<Keyframe> retainEvenly(List<Keyframe> candidates, int maxFrames) {
+        if (maxFrames <= 0) {
+            throw new IllegalArgumentException("OCR_MAX_FRAMES_MUST_BE_POSITIVE");
+        }
         if (candidates == null || candidates.isEmpty()) {
             return List.of();
         }
         List<Keyframe> ordered = candidates.stream().filter(java.util.Objects::nonNull)
                 .sorted(Comparator.comparingLong(Keyframe::timestampMs))
                 .toList();
-        List<Keyframe> retained = new ArrayList<>();
-        long lastRetainedMs = Long.MIN_VALUE;
-        int sceneFrames = 0;
-        for (Keyframe candidate : ordered) {
-            boolean coverageRequired = retained.isEmpty()
-                    || candidate.timestampMs() - lastRetainedMs >= maxIntervalMs;
-            if (coverageRequired || sceneFrames < Math.max(0, maxSceneFrames)) {
-                retained.add(candidate);
-                lastRetainedMs = candidate.timestampMs();
-                if (!coverageRequired) {
-                    sceneFrames++;
-                }
-            }
+        if (ordered.size() <= maxFrames) {
+            return List.copyOf(ordered);
+        }
+        if (maxFrames == 1) {
+            return List.of(ordered.get(0));
+        }
+        List<Keyframe> retained = new ArrayList<>(maxFrames);
+        for (int slot = 0; slot < maxFrames; slot++) {
+            int index = (int) Math.round((double) slot * (ordered.size() - 1) / (maxFrames - 1));
+            retained.add(ordered.get(index));
         }
         return List.copyOf(retained);
     }

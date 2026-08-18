@@ -11,11 +11,10 @@ import org.junit.jupiter.api.Test;
 
 class FfmpegKeyframeExtractorTest {
     @Test
-    void buildsSceneChangeCommandWithHeartbeatWithoutTruncatingCoverage() {
+    void buildsSceneChangeCommandWithoutPeriodicSampling() {
         FfmpegProperties ffmpeg = new FfmpegProperties();
         OcrProperties ocr = new OcrProperties();
         ocr.setSceneThreshold(0.42);
-        ocr.setMaxIntervalSeconds(8);
         ocr.setMaxFrames(25);
         var extractor = new FfmpegKeyframeExtractor(null, ffmpeg, ocr);
 
@@ -23,19 +22,31 @@ class FfmpegKeyframeExtractorTest {
 
         assertThat(command).contains("-fps_mode", "vfr").doesNotContain("-frames:v");
         assertThat(command.get(command.indexOf("-vf") + 1))
-                .contains("gt(scene,0.420)", "gte(t-prev_selected_t,8)", "showinfo");
+                .contains("gt(scene,0.420)", "showinfo")
+                .doesNotContain("gte(t-prev_selected_t");
     }
 
     @Test
-    void limitsExtraSceneFramesButRetainsThirtySecondCoverageAfterBudgetIsExhausted() {
+    void limitsSceneFramesEvenlyAcrossTheCandidateSequence() {
         List<Keyframe> candidates = java.util.stream.LongStream.rangeClosed(0, 100)
                 .mapToObj(second -> new Keyframe(second * 1_000, Path.of("frame-" + second + ".jpg")))
                 .toList();
 
-        List<Keyframe> retained = FfmpegKeyframeExtractor.retainCoverage(candidates, 30_000, 2);
+        List<Keyframe> retained = FfmpegKeyframeExtractor.retainEvenly(candidates, 3);
 
         assertThat(retained).extracting(Keyframe::timestampMs)
-                .containsExactly(0L, 1_000L, 2_000L, 32_000L, 62_000L, 92_000L);
+                .containsExactly(0L, 50_000L, 100_000L);
+    }
+
+    @Test
+    void keepsAllSceneFramesWhenTheyFitTheBudget() {
+        List<Keyframe> candidates = List.of(
+                new Keyframe(4_000, Path.of("frame-2.jpg")),
+                new Keyframe(1_000, Path.of("frame-1.jpg")));
+
+        assertThat(FfmpegKeyframeExtractor.retainEvenly(candidates, 3))
+                .extracting(Keyframe::timestampMs)
+                .containsExactly(1_000L, 4_000L);
     }
 
     @Test

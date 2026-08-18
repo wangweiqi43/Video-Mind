@@ -162,7 +162,7 @@ WHERE id = 1001
 
 **追问 1：OCR 关键帧如何抽取，为什么不能固定每秒一帧？**
 
-**回答：** 场景上，固定高频抽帧会对静态演示文稿产生大量重复 OCR，固定低频又可能漏掉快速切换的关键画面。根因是视频内容变化并不均匀，仅按时间采样无法同时兼顾覆盖率和成本。行动上，我结合场景变化检测与最大时间间隔：画面显著变化时选取候选帧，长时间无变化时仍按最大间隔补一帧，并限制额外场景帧数量，避免镜头频繁抖动导致爆量。结果是静态片段不会被过度识别，慢变化内容也不会出现过长空窗；阈值不是拍脑袋的最终值，我会用不同类型视频统计帧数、OCR 成本和文字召回率后调优。
+**回答：** 场景上，固定时间抽帧会在静态演示文稿中产生大量重复 OCR，同时仍可能错过采样点之间短暂出现的内容。根因是时间间隔与真实画面变化没有稳定对应关系，当前样本中二十余次视觉观察最终只压缩为一个有效区间，额外计算没有形成新证据。行动上，我改为由场景变化检测选择候选帧，取消固定间隔补帧；当候选数量超过预算时，不直接截断视频后半段，而是从完整候选序列中均匀保留并覆盖首尾，再通过 OCR 置信度和文本相似度压缩重复结果。结果是提帧行为与内容变化直接关联，静态画面的 OCR 调用显著减少；场景阈值仍需用文字召回率、候选帧数量和 OCR 耗时共同评估。
 
 **追问 2：时间轴融合怎样避免同一页 PPT 的文字反复出现？**
 
@@ -267,7 +267,7 @@ WHERE id = 1001
 | 音频切片 | `backend/videomind-server/src/main/java/com/videomind/module/task/analysis/chunk/FfmpegAudioChunker.java`；16kHz、单声道、PCM | Q7 |
 | 外部 ASR 恢复 | `backend/videomind-server/src/main/java/com/videomind/module/task/analysis/tencent/TencentAsrChunkTranscriber.java`；提交状态、TaskId 持久化、轮询 | Q7 |
 | ASR 合并 | `backend/videomind-server/src/main/java/com/videomind/module/task/analysis/chunk/AsrChunkResultMerger.java`；绝对时间与中点归属 | Q7 |
-| 关键帧抽取 | `backend/videomind-server/src/main/java/com/videomind/module/task/analysis/ocr/FfmpegKeyframeExtractor.java`；场景阈值与最大间隔 | Q9 |
+| 关键帧抽取 | `backend/videomind-server/src/main/java/com/videomind/module/task/analysis/ocr/FfmpegKeyframeExtractor.java`；场景阈值与候选帧预算 | Q9 |
 | 时间轴融合 | `backend/videomind-server/src/main/java/com/videomind/module/knowledge/timeline/TimelineFusionService.java`；speech block、visual span | Q9 |
 | 时间轴物化 | `backend/videomind-server/src/main/java/com/videomind/module/knowledge/timeline/VideoTimelineMaterializer.java`；`timeline.md` 与元数据 | Q9、Q10 |
 | 语义切块与索引 | `backend/videomind-server/src/main/java/com/videomind/module/knowledge/chunk/SemanticChunker.java`；`backend/videomind-server/src/main/java/com/videomind/module/knowledge/timeline/TimelineKnowledgeIndexer.java` | Q10 |

@@ -99,7 +99,7 @@ VideoMind 的后端本质上是一个**面向长耗时、多外部依赖任务�
 ### 7.4 多模态时序融合
 
 **问题**：ASR 描述“说了什么”，OCR 描述“画面出现什么”，两者时间粒度不同，直接拼接会破坏上下文顺序并制造重复。
-**机制**：音频按带重叠的物理窗口识别，再用片段中点归属逻辑窗口去重并恢复绝对时间；关键帧同时采用场景变化和最大间隔覆盖。融合时清洗并排序语音与 OCR，根据静默间隔、长度、相似度和置信度合并，再按时间交错形成可检索文本。
+**机制**：音频按带重叠的物理窗口识别，再用片段中点归属逻辑窗口去重并恢复绝对时间；关键帧采用场景变化检测，并在候选过多时从完整候选序列中均匀保留。时间线构建时分别清洗语音与 OCR，根据静默间隔、长度、相似度和置信度压缩同模态内容，再按开始时间统一排序为可检索的分层文本。
 **项目落点**：`backend/videomind-server/src/main/java/com/videomind/module/task/analysis/chunk/AsrChunkResultMerger.java`、`backend/videomind-server/src/main/java/com/videomind/module/knowledge/timeline/TimelineFusionService.java`。
 
 ### 7.5 混合检索与证据收敛

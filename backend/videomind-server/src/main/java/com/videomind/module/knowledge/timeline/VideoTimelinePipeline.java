@@ -34,7 +34,7 @@ public class VideoTimelinePipeline {
         String title = video.getOriginalFilename() == null ? "VideoMind 视频" : video.getOriginalFilename();
         long durationMs = video.getDurationSeconds() == null ? 0
                 : Math.multiplyExact(video.getDurationSeconds().longValue(), 1_000L);
-        long maxWindowMs = Math.multiplyExact(ocr.getMaxIntervalSeconds(), 1_000L);
+        long maxWindowMs = Math.multiplyExact(ocr.getVisualTailFallbackSeconds(), 1_000L);
         TimelineFusionService.Timeline timeline = fusion.fuse(safeSpeech, safeVisuals, durationMs, maxWindowMs);
         String markdown = fusion.renderMarkdown(timeline, title + " · 时间轴");
         return new FusedVideoContent(title, timeline, markdown, safeSpeech.size(), safeVisuals.size(), ocrDegraded);
