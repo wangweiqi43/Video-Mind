@@ -14,6 +14,8 @@ public interface VideoFileService extends IService<VideoFile> {
 
     VideoFile getReusableUploadedByMd5(String fileMd5, Long userId);
 
+    SaveUploadedVideoResult saveUploadedOrReuse(VideoFile candidate);
+
     VideoUploadResponse toUploadResponse(VideoFile videoFile, String message, boolean duplicate);
 
     void deleteVideo(Long videoId, Long userId);
@@ -21,4 +23,7 @@ public interface VideoFileService extends IService<VideoFile> {
     List<VideoFile> listVideos(Long userId);
 
     VideoFile getVideoDetail(Long videoId, Long userId);
+
+    record SaveUploadedVideoResult(VideoFile video, boolean reused) {
+    }
 }

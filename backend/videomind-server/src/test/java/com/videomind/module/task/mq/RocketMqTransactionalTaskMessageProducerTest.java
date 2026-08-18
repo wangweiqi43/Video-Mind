@@ -48,7 +48,31 @@ class RocketMqTransactionalTaskMessageProducerTest {
     }
 
     @Test
-    void rejectsResolvedContextWhenRocketMqReportsRollback() {
+    void acceptsRollbackWhenLocalTransactionReusesCanonicalTask() {
+        RocketMQTemplate template = mock(RocketMQTemplate.class);
+        RocketMqTransactionalTaskMessageProducer producer = new RocketMqTransactionalTaskMessageProducer(template);
+        ReflectionTestUtils.setField(producer, "topic", "processing-topic");
+        when(template.sendMessageInTransaction(eq("processing-topic:VIDEO_ANALYSIS"), any(), any()))
+                .thenAnswer(call -> {
+                    ((TaskTransactionContext) call.getArgument(2))
+                            .resolve("event-canonical", 77L, 51L, true);
+                    TransactionSendResult result = new TransactionSendResult();
+                    result.setLocalTransactionState(LocalTransactionState.ROLLBACK_MESSAGE);
+                    return result;
+                });
+        TaskCreateCommand command = new TaskCreateCommand(7L, ProcessingTaskType.VIDEO_ANALYSIS,
+                31L, "VIDEO_ANALYSIS:7:31:v1", "AUDIO_EXTRACT", 5, Map.of("videoMd5", "abc"));
+
+        TaskDispatchResult result = producer.dispatch(command);
+
+        assertThat(result.eventId()).isEqualTo("event-canonical");
+        assertThat(result.processingTaskId()).isEqualTo(77L);
+        assertThat(result.businessId()).isEqualTo(51L);
+        assertThat(result.reused()).isTrue();
+    }
+
+    @Test
+    void rejectsRollbackWhenNoTaskWasReused() {
         RocketMQTemplate template = mock(RocketMQTemplate.class);
         RocketMqTransactionalTaskMessageProducer producer = new RocketMqTransactionalTaskMessageProducer(template);
         ReflectionTestUtils.setField(producer, "topic", "processing-topic");
@@ -63,6 +87,6 @@ class RocketMqTransactionalTaskMessageProducerTest {
                 31L, "VIDEO_ANALYSIS:7:31:v1", "AUDIO_EXTRACT", 5, Map.of("videoMd5", "abc"));
 
         assertThatThrownBy(() -> producer.dispatch(command))
-                .hasMessageContaining("本地事务未提交");
+                .hasMessageContaining("结果与任务复用状态不一致");
     }
 }

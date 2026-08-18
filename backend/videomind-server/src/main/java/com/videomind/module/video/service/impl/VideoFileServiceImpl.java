@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.DigestUtils;
@@ -44,6 +45,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile> implements VideoFileService {
 
     private static final DateTimeFormatter DATE_PATH_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd");
@@ -101,9 +103,15 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
         videoFile.setUploadStatus(UploadStatus.UPLOADED);
         videoFile.setCreatedTime(now);
         videoFile.setUpdatedTime(now);
-        save(videoFile);
+        SaveUploadedVideoResult saved = saveUploadedOrReuse(videoFile);
+        if (saved.reused()) {
+            removeConcurrentUploadObject(storedObject);
+            VideoFile winner = saved.video();
+            throw new BizException(409, "文件已存在：%s（videoId=%d），无需重复上传。"
+                    .formatted(winner.getOriginalFilename(), winner.getId()));
+        }
 
-        VideoUploadResponse response = toUploadResponse(videoFile, "视频上传成功，已保存到 MinIO 并写入元数据。", false);
+        VideoUploadResponse response = toUploadResponse(saved.video(), "视频上传成功，已保存到 MinIO 并写入元数据。", false);
         response.setServerMd5CostMs(md5CostMs);
         response.setServerStorageCostMs(storageCostMs);
         response.setServerTotalCostMs(elapsedMs(totalStart));
@@ -140,6 +148,22 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
             return uploaded;
         }
         return null;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public SaveUploadedVideoResult saveUploadedOrReuse(VideoFile candidate) {
+        if (candidate == null || candidate.getUserId() == null || !StringUtils.hasText(candidate.getFileMd5())) {
+            throw new IllegalArgumentException("uploaded video metadata is incomplete");
+        }
+        if (baseMapper.insertIgnoreUserMd5(candidate) == 1) {
+            return new SaveUploadedVideoResult(candidate, false);
+        }
+        VideoFile existing = getReusableUploadedByMd5(candidate.getFileMd5(), candidate.getUserId());
+        if (existing == null) {
+            throw new IllegalStateException("video MD5 unique constraint rejected insert but reusable row was not found");
+        }
+        return new SaveUploadedVideoResult(existing, true);
     }
 
     @Override
@@ -259,5 +283,14 @@ public class VideoFileServiceImpl extends ServiceImpl<VideoFileMapper, VideoFile
 
     private long elapsedMs(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    private void removeConcurrentUploadObject(StoredObject storedObject) {
+        try {
+            objectStorageService.removeObject(storedObject.getBucket(), storedObject.getObjectKey());
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("Failed to clean duplicate MinIO upload, bucket={}, objectKey={}",
+                    storedObject.getBucket(), storedObject.getObjectKey(), cleanupFailure);
+        }
     }
 }

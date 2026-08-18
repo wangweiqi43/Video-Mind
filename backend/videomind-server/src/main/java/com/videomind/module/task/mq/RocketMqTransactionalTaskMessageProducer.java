@@ -30,18 +30,25 @@ public class RocketMqTransactionalTaskMessageProducer implements TransactionalTa
                 .build();
         try {
             var result = rocketMQTemplate.sendMessageInTransaction(topic + ":" + context.getTag(), message, context);
-            if (result == null || result.getLocalTransactionState() != LocalTransactionState.COMMIT_MESSAGE) {
+            if (result == null) {
                 throw new BizException(503, "RocketMQ 本地事务未提交");
+            }
+            LocalTransactionState state = result.getLocalTransactionState();
+            boolean committedNewTask = state == LocalTransactionState.COMMIT_MESSAGE && !context.isReused();
+            boolean rolledBackDuplicate = state == LocalTransactionState.ROLLBACK_MESSAGE && context.isReused();
+            if (!committedNewTask && !rolledBackDuplicate) {
+                throw new BizException(503, "RocketMQ 本地事务结果与任务复用状态不一致");
             }
         } catch (BizException known) {
             throw known;
         } catch (Exception failure) {
             throw new BizException(503, "RocketMQ 事务消息发送失败：" + failure.getMessage());
         }
-        if (context.getResolvedProcessingTaskId() == null || context.getResolvedBusinessId() == null) {
+        if (context.getResolvedEventId() == null || context.getResolvedEventId().isBlank()
+                || context.getResolvedProcessingTaskId() == null || context.getResolvedBusinessId() == null) {
             throw new BizException(503, "RocketMQ 本地事务未返回任务结果");
         }
-        return new TaskDispatchResult(eventId, context.getResolvedProcessingTaskId(),
+        return new TaskDispatchResult(context.getResolvedEventId(), context.getResolvedProcessingTaskId(),
                 context.getResolvedBusinessId(), context.isReused());
     }
 

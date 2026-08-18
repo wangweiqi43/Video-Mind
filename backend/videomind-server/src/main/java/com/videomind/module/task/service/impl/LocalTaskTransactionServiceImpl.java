@@ -73,19 +73,24 @@ public class LocalTaskTransactionServiceImpl implements LocalTaskTransactionServ
             targetLifecycle.onTaskCreated(command, now);
         }
 
-        MqTransactionEvent event = new MqTransactionEvent();
-        event.setEventId(context.getEventId());
-        event.setTaskId(task.getId());
-        event.setTopic(context.getTopic());
-        event.setTag(context.getTag());
-        event.setTransactionState("COMMITTED");
-        event.setPayloadJson(json(command));
-        event.setCreatedTime(now);
-        event.setUpdatedTime(now);
-        eventMapper.insert(event);
+        if (inserted) {
+            MqTransactionEvent event = new MqTransactionEvent();
+            event.setEventId(context.getEventId());
+            event.setTaskId(task.getId());
+            event.setTopic(context.getTopic());
+            event.setTag(context.getTag());
+            event.setTransactionState("COMMITTED");
+            event.setPayloadJson(json(command));
+            event.setCreatedTime(now);
+            event.setUpdatedTime(now);
+            eventMapper.insert(event);
+        } else if (task.getEventId() == null || task.getEventId().isBlank()) {
+            throw new IllegalStateException("active task is missing its canonical event id");
+        }
 
-        context.resolve(task.getId(), businessId, !inserted);
-        return new TaskDispatchResult(context.getEventId(), task.getId(), businessId, !inserted);
+        String resolvedEventId = inserted ? context.getEventId() : task.getEventId();
+        context.resolve(resolvedEventId, task.getId(), businessId, !inserted);
+        return new TaskDispatchResult(resolvedEventId, task.getId(), businessId, !inserted);
     }
 
     private Long createVideoTask(TaskCreateCommand command, LocalDateTime now) {

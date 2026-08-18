@@ -47,6 +47,7 @@ class LegacySchemaMigrationTest {
         assertLegacySchemaRemoved(FRESH_DB);
         assertLocalSchemaRetained(FRESH_DB);
         assertAsrChunkSchema(FRESH_DB);
+        assertVideoMd5UniqueConstraint(FRESH_DB);
     }
 
     @Test
@@ -75,6 +76,7 @@ class LegacySchemaMigrationTest {
         assertLegacySchemaRemoved(UPGRADE_DB);
         assertLocalSchemaRetained(UPGRADE_DB);
         assertAsrChunkSchema(UPGRADE_DB);
+        assertVideoMd5UniqueConstraint(UPGRADE_DB);
         try (Connection connection = connect(UPGRADE_DB); Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("SELECT transcript_version,summary_status,"
                      + "summary_version,latest_summary_id FROM video_file WHERE id=1")) {
@@ -133,6 +135,15 @@ class LegacySchemaMigrationTest {
                     + "WHERE processing_task_id=99 AND chunk_index=0 AND state='SUCCEEDED' "
                     + "AND submit_attempt=1"))
                     .isEqualTo(1);
+        }
+    }
+
+    private static void assertVideoMd5UniqueConstraint(String database) throws Exception {
+        try (Connection connection = connect(database); Statement statement = connection.createStatement()) {
+            assertThat(count(statement, "SELECT COUNT(*) FROM information_schema.STATISTICS "
+                    + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='video_file' "
+                    + "AND INDEX_NAME='uk_video_file_user_md5' AND NON_UNIQUE=0"))
+                    .isEqualTo(2);
         }
     }
 

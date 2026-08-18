@@ -24,8 +24,10 @@ public class TaskTransactionListener implements RocketMQLocalTransactionListener
             return RocketMQLocalTransactionState.ROLLBACK;
         }
         try {
-            localTransactionService.createOrReuse(context);
-            return RocketMQLocalTransactionState.COMMIT;
+            var result = localTransactionService.createOrReuse(context);
+            return result.reused()
+                    ? RocketMQLocalTransactionState.ROLLBACK
+                    : RocketMQLocalTransactionState.COMMIT;
         } catch (Exception failure) {
             log.error("RocketMQ local task transaction failed, eventId={}", context.getEventId(), failure);
             return RocketMQLocalTransactionState.ROLLBACK;

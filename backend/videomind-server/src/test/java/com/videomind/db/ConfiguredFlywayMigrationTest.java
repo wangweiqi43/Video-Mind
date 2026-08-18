@@ -27,8 +27,14 @@ class ConfiguredFlywayMigrationTest {
             try (var history = statement.executeQuery("SELECT version,success FROM flyway_schema_history "
                     + "ORDER BY installed_rank DESC LIMIT 1")) {
                 assertThat(history.next()).isTrue();
-                assertThat(history.getString(1)).isEqualTo("17");
+                assertThat(history.getString(1)).isEqualTo("21");
                 assertThat(history.getBoolean(2)).isTrue();
+            }
+            try (var uniqueIndex = statement.executeQuery("SELECT COUNT(*) FROM information_schema.STATISTICS "
+                    + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='video_file' "
+                    + "AND INDEX_NAME='uk_video_file_user_md5' AND NON_UNIQUE=0")) {
+                uniqueIndex.next();
+                assertThat(uniqueIndex.getLong(1)).isEqualTo(2);
             }
             try (var legacyTables = statement.executeQuery("SELECT COUNT(*) FROM information_schema.TABLES "
                     + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('mindagent_binding','video_agent_task')")) {

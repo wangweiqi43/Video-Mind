@@ -21,6 +21,7 @@ import com.videomind.module.video.entity.VideoUploadSession;
 import com.videomind.module.video.mapper.VideoUploadSessionMapper;
 import com.videomind.module.video.service.MultipartUploadService;
 import com.videomind.module.video.service.VideoFileService;
+import com.videomind.module.video.service.VideoFileService.SaveUploadedVideoResult;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.IOException;
@@ -282,7 +283,11 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
                         inputStream, Files.size(mergedFile), session.getContentType());
             }
             long storageCostMs = elapsedMs(storageStart);
-            VideoFile videoFile = saveVideoFile(session, storedObject);
+            SaveUploadedVideoResult saved = saveVideoFile(session, storedObject);
+            VideoFile videoFile = saved.video();
+            if (saved.reused()) {
+                objectStorageService.removeObject(storedObject.getBucket(), storedObject.getObjectKey());
+            }
             session.setVideoId(videoFile.getId());
             session.setUploadStatus(UploadSessionStatus.COMPLETED);
             session.setUploadedParts(session.getTotalParts());
@@ -291,7 +296,8 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
             stringRedisTemplate.delete(bitmapKey(uploadId));
             cleanupUploadDir(uploadId);
 
-            VideoUploadResponse response = videoFileService.toUploadResponse(videoFile, "分片上传完成，已合并并写入 MinIO。", false);
+            String message = saved.reused() ? "文件已存在，已秒传成功。" : "分片上传完成，已合并并写入 MinIO。";
+            VideoUploadResponse response = videoFileService.toUploadResponse(videoFile, message, saved.reused());
             response.setServerMergeCostMs(mergeCostMs);
             response.setServerMd5CostMs(md5CostMs);
             response.setServerStorageCostMs(storageCostMs);
@@ -346,7 +352,7 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
         return mergedFile;
     }
 
-    private VideoFile saveVideoFile(VideoUploadSession session, StoredObject storedObject) {
+    private SaveUploadedVideoResult saveVideoFile(VideoUploadSession session, StoredObject storedObject) {
         LocalDateTime now = LocalDateTime.now();
         VideoFile videoFile = new VideoFile();
         videoFile.setUserId(session.getUserId());
@@ -359,8 +365,7 @@ public class MultipartUploadServiceImpl extends ServiceImpl<VideoUploadSessionMa
         videoFile.setUploadStatus(UploadStatus.UPLOADED);
         videoFile.setCreatedTime(now);
         videoFile.setUpdatedTime(now);
-        videoFileService.save(videoFile);
-        return videoFile;
+        return videoFileService.saveUploadedOrReuse(videoFile);
     }
 
     private VideoUploadResponse responseForCompleted(VideoUploadSession session) {

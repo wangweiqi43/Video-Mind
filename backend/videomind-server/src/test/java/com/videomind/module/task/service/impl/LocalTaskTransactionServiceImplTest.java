@@ -47,10 +47,11 @@ class LocalTaskTransactionServiceImplTest {
     }
 
     @Test
-    void insertIgnoreRaceReusesWinnerButStillRecordsThisEvent() {
+    void insertIgnoreRaceReusesWinnerWithoutRecordingDuplicateEvent() {
         when(tasks.insertIgnoreActive(any(ProcessingTask.class))).thenReturn(0);
         ProcessingTask winner = new ProcessingTask();
         winner.setId(88L);
+        winner.setEventId("event-winner");
         winner.setBusinessId(31L);
         when(tasks.selectOne(any())).thenReturn(winner);
         TaskTransactionContext context = context(102L);
@@ -58,9 +59,11 @@ class LocalTaskTransactionServiceImplTest {
         var result = service.createOrReuse(context);
 
         assertThat(result.processingTaskId()).isEqualTo(88L);
+        assertThat(result.eventId()).isEqualTo("event-winner");
         assertThat(result.businessId()).isEqualTo(31L);
         assertThat(result.reused()).isTrue();
-        verify(events).insert(any(MqTransactionEvent.class));
+        verify(events, never()).insert(any(MqTransactionEvent.class));
+        assertThat(context.getResolvedEventId()).isEqualTo("event-winner");
     }
 
     @Test
@@ -94,6 +97,7 @@ class LocalTaskTransactionServiceImplTest {
         when(tasks.insertIgnoreActive(any(ProcessingTask.class))).thenReturn(0);
         ProcessingTask winner = new ProcessingTask();
         winner.setId(88L);
+        winner.setEventId("event-video-winner");
         winner.setBusinessId(502L);
         when(tasks.selectOne(any())).thenReturn(winner);
         TaskCreateCommand command = new TaskCreateCommand(7L, ProcessingTaskType.VIDEO_ANALYSIS,
@@ -104,9 +108,11 @@ class LocalTaskTransactionServiceImplTest {
         var result = service.createOrReuse(context);
 
         assertThat(result.processingTaskId()).isEqualTo(88L);
+        assertThat(result.eventId()).isEqualTo("event-video-winner");
         assertThat(result.businessId()).isEqualTo(502L);
         assertThat(result.reused()).isTrue();
         verify(taskRecords, never()).insert(any(TaskRecord.class));
+        verify(events, never()).insert(any(MqTransactionEvent.class));
     }
 
     @Test

@@ -24,11 +24,24 @@ class TaskTransactionListenerTest {
         TaskTransactionContext context = new TaskTransactionContext("event-1", 1L, "topic", "TAG",
                 new TaskCreateCommand(7L, com.videomind.common.enums.ProcessingTaskType.DOCUMENT_INGEST,
                         31L, "fp", "START", 5, java.util.Map.of()));
+        when(local.createOrReuse(context)).thenReturn(new TaskDispatchResult("event-1", 1L, 31L, false));
         assertThat(listener.executeLocalTransaction(message("event-1"), context))
                 .isEqualTo(RocketMQLocalTransactionState.COMMIT);
 
         doThrow(new IllegalStateException("db down")).when(local).createOrReuse(any());
         assertThat(listener.executeLocalTransaction(message("event-1"), context))
+                .isEqualTo(RocketMQLocalTransactionState.ROLLBACK);
+    }
+
+    @Test
+    void reusedTaskRollsBackDuplicateHalfMessage() {
+        TaskTransactionContext context = new TaskTransactionContext("event-duplicate", 2L, "topic", "TAG",
+                new TaskCreateCommand(7L, com.videomind.common.enums.ProcessingTaskType.DOCUMENT_INGEST,
+                        31L, "fp", "START", 5, java.util.Map.of()));
+        when(local.createOrReuse(context))
+                .thenReturn(new TaskDispatchResult("event-canonical", 1L, 31L, true));
+
+        assertThat(listener.executeLocalTransaction(message("event-duplicate"), context))
                 .isEqualTo(RocketMQLocalTransactionState.ROLLBACK);
     }
 
